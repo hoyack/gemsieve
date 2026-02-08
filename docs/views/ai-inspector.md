@@ -17,7 +17,7 @@ The total entry count and current page are shown on the right.
 
 ## Prompt library
 
-A collapsible section shows the two prompt templates used by GemSieve:
+A collapsible accordion section shows all prompt templates used by GemSieve. Each section is expandable and shows the template text with variable placeholders highlighted.
 
 ### CLASSIFICATION_PROMPT (Stage 4)
 
@@ -33,16 +33,34 @@ Variables filled in per sender:
 
 The AI responds with a JSON object containing: industry, company_size_estimate, marketing_sophistication (1-10), sender_intent, product_type, product_description, pain_points_addressed, target_audience, partner_program_detected, renewal_signal_detected, and confidence.
 
-### ENGAGEMENT_PROMPT (Stage 7)
+When `--retrain` is used, few-shot correction examples from recent classification overrides are appended to the prompt. These appear as `CORRECTION:` blocks showing what the AI got wrong and what the correct value should be.
 
-Variables filled in per gem:
-- `{strategy_name}` — engagement strategy (audit, revival, partner, etc.)
-- `{gem_type}` — type of commercial opportunity
-- `{gem_explanation_json}` — structured explanation of why this gem was detected
-- Recipient profile fields: company_name, contact_name, industry, company_size, esp_used, etc.
-- User profile fields: your_name, your_service, your_tone
+### Strategy prompts (Stage 7)
 
-The AI responds with a personalized outreach message.
+Stage 7 uses 7 distinct strategy-specific prompts instead of a single generic engagement prompt. Each prompt is shown in a collapsible accordion panel with its gem type mappings listed:
+
+| Strategy | Template ID | Gem Types | Extra Variables |
+|----------|-------------|-----------|-----------------|
+| **audit** | STRATEGY_audit | weak_marketing_lead, vendor_upsell | Observation from offer/CTA analysis |
+| **revival** | STRATEGY_revival | dormant_warm_thread, unanswered_ask | `{thread_subject}`, `{dormancy_days}` |
+| **partner** | STRATEGY_partner | partner_program | `{partner_urls}` |
+| **renewal_negotiation** | STRATEGY_renewal_negotiation | renewal_leverage | `{renewal_dates}`, `{monetary_signals}` |
+| **industry_report** | STRATEGY_industry_report | industry_intel | Industry data and trends |
+| **mirror** | STRATEGY_mirror | co_marketing | Target audience overlap analysis |
+| **distribution_pitch** | STRATEGY_distribution_pitch | distribution_channel | Content opportunity signals |
+
+All strategy prompts share these common variables:
+- `{gem_type}`, `{gem_explanation_json}` — gem context
+- `{company_name}`, `{contact_name}`, `{contact_role}` — recipient info
+- `{industry}`, `{company_size}`, `{esp_used}`, `{sophistication}` — sender profile
+- `{product_description}`, `{pain_points}` — product context
+- `{user_service_description}`, `{user_tone}`, `{user_audience}` — your positioning from config
+
+The AI responds with a JSON object containing `subject_line` and `body`.
+
+### DEFAULT_ENGAGEMENT_PROMPT (fallback)
+
+Used when a gem type doesn't map to any strategy. Contains generic engagement template variables. This prompt is rarely used since all 10 gem types map to specific strategies.
 
 ## Audit log entries
 
@@ -50,6 +68,7 @@ Each entry is displayed as a card showing:
 
 **Header:**
 - Stage badge (classify/engage)
+- Template badge — identifies which prompt was used: `CLASSIFICATION_PROMPT`, `STRATEGY_audit`, `STRATEGY_revival`, `STRATEGY_partner`, `STRATEGY_renewal_negotiation`, `STRATEGY_industry_report`, `STRATEGY_mirror`, `STRATEGY_distribution_pitch`, or `ENGAGEMENT_PROMPT` (fallback)
 - Model badge (e.g., `mistral-large-3:675b-cloud`)
 - Sender domain badge
 - Entry ID and pipeline run ID

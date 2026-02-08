@@ -57,8 +57,32 @@ gemsieve override --message abc123 --field sender_intent --value "partnership_pi
 4. The `has_override` flag is set to true on the classification record
 5. Sender-scoped overrides apply to all messages from that domain; message-scoped overrides apply to one message only
 
+### Override priority
+
+When both sender-scoped and message-scoped overrides exist for the same message:
+
+1. The AI classification runs first
+2. Sender-scoped overrides are applied (if any exist for the domain)
+3. Message-scoped overrides are applied last, taking highest priority
+
+This means a message-scoped override will always win over a sender-scoped override for the same field.
+
+## Few-shot feedback loop
+
+Overrides serve double duty: they correct individual classifications AND improve future AI accuracy.
+
+When classification is run with `--retrain` (CLI: `gemsieve classify --retrain`, or the Retrain toggle in [Pipeline Control](pipeline.md)):
+
+1. The last 10 overrides are queried from the database
+2. Each override is formatted as a `CORRECTION:` example showing the domain, field, wrong value, and correct value
+3. These examples are appended to the classification prompt as few-shot corrections
+4. The AI sees what it got wrong in the past and adjusts its behavior accordingly
+
+This provides classification improvement without model fine-tuning. The more overrides you add, the better the few-shot context becomes.
+
 ## Related views
 
 - [Classifications](classifications.md) — the AI output that overrides correct
-- [AI Inspector](ai-inspector.md) — see the AI's original reasoning to understand why it was wrong
+- [AI Inspector](ai-inspector.md) — see the AI's original reasoning to understand why it was wrong. When retrain is active, the rendered prompt will include `CORRECTION:` blocks.
 - [Profiles](profiles.md) — profiles reflect overridden classifications
+- [Pipeline Control](pipeline.md) — use the Retrain toggle to enable few-shot feedback

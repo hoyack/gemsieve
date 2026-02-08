@@ -94,15 +94,23 @@ def extract_metadata(db: sqlite3.Connection, esp_rules_path: str = "esp_rules.ya
         if not is_bulk and unsub_url:
             is_bulk = True  # Has unsubscribe → likely bulk
 
+        # New fields: X-Mailer, Mail Server, Precedence, Feedback-ID
+        x_mailer = _extract_x_mailer(headers)
+        mail_server = _extract_mail_server(headers)
+        precedence_value = _extract_precedence(headers)
+        feedback_id = _extract_feedback_id(headers)
+
         db.execute(
             """INSERT OR REPLACE INTO parsed_metadata
                (message_id, sender_domain, envelope_sender, esp_identified, esp_confidence,
                 dkim_domain, spf_result, dmarc_result, sending_ip,
-                list_unsubscribe_url, list_unsubscribe_email, is_bulk)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                list_unsubscribe_url, list_unsubscribe_email, is_bulk,
+                x_mailer, mail_server, precedence, feedback_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (msg_id, sender_domain, envelope_sender, esp_name, esp_confidence,
              dkim_domain, spf_result, dmarc_result, sending_ip,
-             unsub_url, unsub_email, is_bulk),
+             unsub_url, unsub_email, is_bulk,
+             x_mailer, mail_server, precedence_value, feedback_id),
         )
         processed += 1
 
@@ -111,6 +119,35 @@ def extract_metadata(db: sqlite3.Connection, esp_rules_path: str = "esp_rules.ya
 
     db.commit()
     return processed
+
+
+def _extract_x_mailer(headers: dict[str, list[str]]) -> str | None:
+    """Extract X-Mailer header value."""
+    vals = headers.get("x-mailer", [])
+    return vals[0].strip() if vals else None
+
+
+def _extract_mail_server(headers: dict[str, list[str]]) -> str | None:
+    """Extract originating mail server from outermost Received header."""
+    received_vals = headers.get("received", [])
+    if not received_vals:
+        return None
+    # Outermost Received header is typically the last one in the list
+    outermost = received_vals[-1]
+    match = re.search(r"from\s+([\w.\-]+)", outermost, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def _extract_precedence(headers: dict[str, list[str]]) -> str | None:
+    """Extract Precedence header value."""
+    vals = headers.get("precedence", [])
+    return vals[0].strip().lower() if vals else None
+
+
+def _extract_feedback_id(headers: dict[str, list[str]]) -> str | None:
+    """Extract Feedback-ID header value (used by ESPs for campaign tracking)."""
+    vals = headers.get("feedback-id", [])
+    return vals[0].strip() if vals else None
 
 
 def _extract_auth_result(headers: dict[str, list[str]], protocol: str) -> str | None:

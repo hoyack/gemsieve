@@ -19,15 +19,22 @@ def _get_nlp(model_name: str = "en_core_web_sm"):
     return _nlp
 
 
-def extract_entities(db: sqlite3.Connection, spacy_model: str = "en_core_web_sm") -> int:
+def extract_entities(
+    db: sqlite3.Connection,
+    spacy_model: str = "en_core_web_sm",
+    entity_config=None,
+) -> int:
     """Extract entities from parsed content for unprocessed messages.
+
+    Args:
+        entity_config: EntityConfig instance controlling which extraction types are enabled.
 
     Returns count of messages processed.
     """
     # Get messages with parsed content but no entities yet
     rows = db.execute(
         """SELECT pc.message_id, pc.body_clean, pc.signature_block,
-                  m.from_address, m.from_name, m.subject
+                  m.from_address, m.from_name, m.subject, m.cc_addresses
            FROM parsed_content pc
            JOIN messages m ON pc.message_id = m.message_id
            LEFT JOIN extracted_entities ee ON pc.message_id = ee.message_id
@@ -39,6 +46,11 @@ def extract_entities(db: sqlite3.Connection, spacy_model: str = "en_core_web_sm"
 
     nlp = _get_nlp(spacy_model)
     processed = 0
+
+    # Determine toggles from config
+    do_monetary = entity_config.extract_monetary if entity_config else True
+    do_dates = entity_config.extract_dates if entity_config else True
+    do_procurement = entity_config.extract_procurement if entity_config else True
 
     for row in rows:
         msg_id = row["message_id"]
@@ -80,25 +92,32 @@ def extract_entities(db: sqlite3.Connection, spacy_model: str = "en_core_web_sm"
                         "source": "signature",
                     })
 
-        # Add sender as a person entity
+        # Add sender as a person entity with relationship classification
         if from_name:
+            relationship = _classify_person_relationship("sender", "header", from_address)
             entities.append({
                 "entity_type": "person",
                 "entity_value": from_name,
                 "entity_normalized": from_name.strip(),
-                "context": f"From: {from_name} <{from_address}>",
+                "context": f"From: {from_name} <{from_address}> ({relationship})",
                 "confidence": 1.0,
                 "source": "header",
             })
 
-        # Regex: monetary values
-        entities.extend(_extract_monetary(body_clean + " " + subject))
+        # Extract CC entities as person entities
+        entities.extend(_extract_cc_entities(row))
 
-        # Regex: dates in context
-        entities.extend(_extract_dates(body_clean))
+        # Regex: monetary values (controlled by config toggle)
+        if do_monetary:
+            entities.extend(_extract_monetary(body_clean + " " + subject))
 
-        # Regex: procurement signals
-        entities.extend(_extract_procurement(body_clean))
+        # Regex: dates in context with future date detection (controlled by config toggle)
+        if do_dates:
+            entities.extend(_extract_dates(body_clean))
+
+        # Regex: procurement signals (controlled by config toggle)
+        if do_procurement:
+            entities.extend(_extract_procurement(body_clean))
 
         # Regex: role/title from signature
         entities.extend(_extract_roles(signature_block, from_name))
@@ -119,6 +138,88 @@ def extract_entities(db: sqlite3.Connection, spacy_model: str = "en_core_web_sm"
 
     db.commit()
     return processed
+
+
+def _classify_person_relationship(role: str, source: str, from_address: str) -> str:
+    """Classify person relationship based on role, source, and email patterns.
+
+    Returns: decision_maker, automated, vendor_contact, or peer.
+    """
+    address_lower = from_address.lower() if from_address else ""
+
+    # Automated senders
+    automated_patterns = [
+        "noreply", "no-reply", "donotreply", "notifications", "mailer-daemon",
+        "bounce", "automated", "system", "alerts",
+    ]
+    local_part = address_lower.split("@")[0] if "@" in address_lower else ""
+    if any(p in local_part for p in automated_patterns):
+        return "automated"
+
+    # Decision maker patterns in role/title context
+    decision_maker_titles = [
+        "ceo", "cto", "cfo", "coo", "cmo", "founder", "co-founder",
+        "president", "vp", "vice president", "director", "head of", "partner",
+    ]
+    role_lower = role.lower() if role else ""
+    if any(t in role_lower for t in decision_maker_titles):
+        return "decision_maker"
+
+    # Vendor contact patterns
+    vendor_patterns = ["sales", "support", "billing", "account", "success"]
+    if any(p in local_part for p in vendor_patterns):
+        return "vendor_contact"
+
+    return "peer"
+
+
+def _extract_cc_entities(message_row) -> list[dict]:
+    """Extract CC addresses as person entities."""
+    entities = []
+    cc_raw = message_row["cc_addresses"]
+    if not cc_raw:
+        return entities
+
+    try:
+        cc_list = json.loads(cc_raw)
+    except (json.JSONDecodeError, TypeError):
+        return entities
+
+    for cc in cc_list:
+        if isinstance(cc, dict):
+            name = cc.get("name", "")
+            email = cc.get("email", "")
+        elif isinstance(cc, str):
+            name = ""
+            email = cc
+        else:
+            continue
+
+        if not email:
+            continue
+
+        relationship = _classify_person_relationship("cc", "header", email)
+        entities.append({
+            "entity_type": "person",
+            "entity_value": name or email,
+            "entity_normalized": (name or email).strip(),
+            "context": f"CC: {name} <{email}> ({relationship})",
+            "confidence": 0.7,
+            "source": "header",
+        })
+
+    return entities
+
+
+def _is_future_date(date_str: str) -> bool:
+    """Check if a date string represents a future date using python-dateutil."""
+    try:
+        from dateutil import parser as dateutil_parser
+        parsed = dateutil_parser.parse(date_str, fuzzy=True)
+        from datetime import datetime, timezone
+        return parsed.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc)
+    except (ValueError, TypeError, OverflowError):
+        return False
 
 
 def _map_spacy_label(label: str) -> str:
@@ -165,7 +266,10 @@ def _extract_monetary(text: str) -> list[dict]:
 
 
 def _extract_dates(text: str) -> list[dict]:
-    """Extract dates in renewal/expiration/deadline context."""
+    """Extract dates in renewal/expiration/deadline context.
+
+    Encodes future date detection in entity_normalized as 'renewal:future' etc.
+    """
     entities = []
 
     patterns = [
@@ -176,10 +280,15 @@ def _extract_dates(text: str) -> list[dict]:
 
     for pattern, context in patterns:
         for match in re.finditer(pattern, text, re.IGNORECASE):
+            date_str = match.group(1).strip()
+            # Encode future date detection in entity_normalized
+            normalized = date_str
+            if _is_future_date(date_str):
+                normalized = f"{context}:future"
             entities.append({
                 "entity_type": "date",
-                "entity_value": match.group(1),
-                "entity_normalized": match.group(1).strip(),
+                "entity_value": date_str,
+                "entity_normalized": normalized,
                 "context": context,
                 "confidence": 0.8,
                 "source": "body",

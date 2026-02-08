@@ -85,6 +85,10 @@ class ParsedMetadata(Base):
     list_unsubscribe_url: Mapped[str | None] = mapped_column(String)
     list_unsubscribe_email: Mapped[str | None] = mapped_column(String)
     is_bulk: Mapped[bool | None] = mapped_column(Boolean)
+    x_mailer: Mapped[str | None] = mapped_column(String)
+    mail_server: Mapped[str | None] = mapped_column(String)
+    precedence: Mapped[str | None] = mapped_column(String)
+    feedback_id: Mapped[str | None] = mapped_column(String)
     parsed_at: Mapped[str | None] = mapped_column(String)
 
 

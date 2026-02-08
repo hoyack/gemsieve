@@ -30,6 +30,20 @@ class LoggingAIProvider:
         template_name = "unknown"
         if "Classify this sender" in prompt:
             template_name = "CLASSIFICATION_PROMPT"
+        elif "I Audited Your Funnel" in prompt:
+            template_name = "STRATEGY_audit"
+        elif "thread revival" in prompt:
+            template_name = "STRATEGY_revival"
+        elif "partner program application" in prompt:
+            template_name = "STRATEGY_partner"
+        elif "renewal negotiation" in prompt:
+            template_name = "STRATEGY_renewal_negotiation"
+        elif "content-led engagement" in prompt:
+            template_name = "STRATEGY_industry_report"
+        elif "mirror-match" in prompt:
+            template_name = "STRATEGY_mirror"
+        elif "pitch to get featured" in prompt:
+            template_name = "STRATEGY_distribution_pitch"
         elif "personalized engagement" in prompt:
             template_name = "ENGAGEMENT_PROMPT"
 
@@ -211,7 +225,8 @@ class TaskManager:
 
         elif stage_name == "entities":
             from gemsieve.stages.entities import extract_entities
-            return extract_entities(conn, spacy_model=config.entity_extraction.spacy_model)
+            return extract_entities(conn, spacy_model=config.entity_extraction.spacy_model,
+                                    entity_config=config.entity_extraction)
 
         elif stage_name == "classify":
             from gemsieve.stages.classify import classify_messages
@@ -232,6 +247,7 @@ class TaskManager:
                     max_body_chars=config.ai.max_body_chars,
                     ai_config=config.ai.to_provider_dict(),
                     use_crew=kwargs.get("use_crew", False),
+                    retrain=kwargs.get("retrain", False),
                 )
             finally:
                 ai_module.get_provider = original_get_provider
@@ -239,7 +255,7 @@ class TaskManager:
         elif stage_name == "profile":
             from gemsieve.stages.profile import build_profiles, detect_gems
             count = build_profiles(conn)
-            count += detect_gems(conn)
+            count += detect_gems(conn, engagement_config=config.engagement, scoring_config=config.scoring)
             return count
 
         elif stage_name == "segment":

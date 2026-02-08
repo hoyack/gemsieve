@@ -52,14 +52,30 @@ Sort by **link_count**, **tracking_pixel_count**, or **template_complexity_score
 
 Stage 2 processes the HTML body of each email:
 
-- **body_clean** — HTML stripped to readable text
+- **body_clean** — HTML stripped to readable text, with marketing footers removed
 - **signature_block** — email signature separated from body
+- **footer_stripped** — marketing footer content that was removed (unsubscribe blocks, address blocks, legal disclaimers)
 - **cta_texts** — text from buttons and prominent links
 - **offer_types** — categorized offers (discount, free_trial, webinar, case_study, etc.)
 - **link analysis** — total count, unique domains, UTM campaigns, link intents
 - **tracking pixels** — 1x1 invisible images used for open tracking
 - **physical_address** — postal address detection (CAN-SPAM compliance indicator)
 - **social_links** — links to social media profiles
+
+### Footer stripping
+
+Marketing emails typically end with boilerplate footers that add noise to content analysis. Stage 2 scans the last 20 lines of each email body for common footer patterns and strips them:
+
+- Unsubscribe links and instructions
+- Physical mailing addresses
+- Privacy policy and legal disclaimer links
+- "Sent by [ESP]" attribution lines
+- "View in browser" links
+- Social media follow buttons
+- Copyright notices
+- "You are receiving this because..." explanations
+
+The stripped footer is preserved in the `footer_stripped` field for reference but excluded from the `body_clean` text that feeds into downstream stages (entities, classification, engagement). This improves entity extraction accuracy and classification quality by removing boilerplate noise.
 
 ## Related views
 

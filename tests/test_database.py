@@ -1,6 +1,8 @@
 """Tests for database module."""
 
-from gemsieve.database import db_stats, init_db
+import sqlite3
+
+from gemsieve.database import db_stats, init_db, migrate_db
 
 
 def test_init_db_creates_all_tables(db):
@@ -55,3 +57,41 @@ def test_foreign_key_thread(db):
     stats = db_stats(db)
     assert stats["threads"] == 1
     assert stats["messages"] == 1
+
+
+def test_migrate_db_adds_missing_columns():
+    """migrate_db() adds missing columns to a pre-existing schema."""
+    # Create a DB with the old schema (no x_mailer, mail_server, etc.)
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute(
+        """CREATE TABLE parsed_metadata (
+            message_id TEXT PRIMARY KEY,
+            sender_domain TEXT,
+            is_bulk BOOLEAN
+        )"""
+    )
+    conn.commit()
+
+    actions = migrate_db(conn)
+
+    assert len(actions) == 4
+    assert any("x_mailer" in a for a in actions)
+    assert any("mail_server" in a for a in actions)
+    assert any("precedence" in a for a in actions)
+    assert any("feedback_id" in a for a in actions)
+
+    # Verify columns actually exist
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(parsed_metadata)").fetchall()}
+    assert "x_mailer" in cols
+    assert "mail_server" in cols
+    assert "precedence" in cols
+    assert "feedback_id" in cols
+    conn.close()
+
+
+def test_migrate_db_noop_on_fresh_schema(db):
+    """migrate_db() does nothing on a fresh schema that already has all columns."""
+    actions = migrate_db(db)
+    assert len(actions) == 0

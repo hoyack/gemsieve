@@ -69,6 +69,10 @@ class ParsedMetadata:
     list_unsubscribe_url: str | None = None
     list_unsubscribe_email: str | None = None
     is_bulk: bool = False
+    x_mailer: str | None = None
+    mail_server: str | None = None
+    precedence: str | None = None
+    feedback_id: str | None = None
 
 
 @dataclass

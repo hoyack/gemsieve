@@ -241,6 +241,10 @@ def _parse_single_message(body_html: str | None, body_text: str | None) -> dict:
 
     # Strip signatures and quotes from text
     body_clean, signature_block = _strip_signature_and_quotes(full_text)
+
+    # Strip marketing footers from clean body
+    body_clean, _footer = _strip_footer(body_clean)
+
     result["body_clean"] = body_clean.strip()
     result["signature_block"] = signature_block
 
@@ -308,6 +312,51 @@ def _strip_signature_and_quotes(text: str) -> tuple[str, str | None]:
         signature_block = "\n".join(sig_lines).strip()
 
     return "\n".join(clean_lines), signature_block
+
+
+# Footer patterns that indicate marketing/transactional email footers
+FOOTER_PATTERNS = [
+    re.compile(r"^you(?:'re| are) receiving this (?:email|message|newsletter)", re.IGNORECASE),
+    re.compile(r"^this (?:email|message) was sent to", re.IGNORECASE),
+    re.compile(r"^to (?:stop receiving|unsubscribe|opt.out)", re.IGNORECASE),
+    re.compile(r"^if you no longer (?:wish|want) to receive", re.IGNORECASE),
+    re.compile(r"^click here to (?:unsubscribe|update your preferences)", re.IGNORECASE),
+    re.compile(r"^manage (?:your )?(?:email )?preferences", re.IGNORECASE),
+    re.compile(r"^(?:©|\(c\)|copyright)\s*\d{4}", re.IGNORECASE),
+    re.compile(r"^view (?:this email )?in (?:your )?browser", re.IGNORECASE),
+    re.compile(r"^sent (?:by|via|with) [\w\s]+(?:\.com|inc|llc)", re.IGNORECASE),
+    re.compile(r"^powered by \w+", re.IGNORECASE),
+]
+
+
+def _strip_footer(text: str) -> tuple[str, str | None]:
+    """Strip marketing email footers by scanning bottom-up through last 20 lines.
+
+    Returns (clean_text, footer_text).
+    """
+    lines = text.split("\n")
+    if len(lines) <= 3:
+        return text, None
+
+    # Scan the last 20 lines bottom-up for footer start
+    scan_start = max(0, len(lines) - 20)
+    footer_start = None
+
+    for i in range(len(lines) - 1, scan_start - 1, -1):
+        stripped = lines[i].strip()
+        if not stripped:
+            continue
+        for pattern in FOOTER_PATTERNS:
+            if pattern.match(stripped):
+                footer_start = i
+                break
+
+    if footer_start is None:
+        return text, None
+
+    clean = "\n".join(lines[:footer_start])
+    footer = "\n".join(lines[footer_start:])
+    return clean, footer.strip() or None
 
 
 # Offer detection patterns from spec section 5.3

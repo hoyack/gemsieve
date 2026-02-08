@@ -34,6 +34,15 @@
                  value="{{ min_score }}" placeholder="0" style="width: 80px;">
         </div>
         <div class="col-auto">
+          <label class="form-label small">Urgency</label>
+          <select name="urgency" class="form-select form-select-sm">
+            <option value="">All</option>
+            <option value="high" {% if urgency_filter == 'high' %}selected{% endif %}>High</option>
+            <option value="medium" {% if urgency_filter == 'medium' %}selected{% endif %}>Medium</option>
+            <option value="low" {% if urgency_filter == 'low' %}selected{% endif %}>Low</option>
+          </select>
+        </div>
+        <div class="col-auto">
           <label class="form-label small">Sort</label>
           <select name="sort" class="form-select form-select-sm">
             <option value="score_desc" {% if sort_by == 'score_desc' %}selected{% endif %}>Score (high to low)</option>
@@ -83,6 +92,22 @@
                 style="width: {{ gem.score }}%"></div>
             </div>
           </div>
+
+          <!-- Value & Urgency badges -->
+          {% if gem.estimated_value or gem.urgency %}
+          <div class="mb-2">
+            {% if gem.estimated_value %}
+            <span class="badge bg-{% if 'high' in gem.estimated_value %}danger{% elif 'medium' in gem.estimated_value %}warning text-dark{% else %}info{% endif %} me-1">
+              Value: {{ gem.estimated_value }}
+            </span>
+            {% endif %}
+            {% if gem.urgency %}
+            <span class="badge bg-{% if gem.urgency == 'high' %}danger{% elif gem.urgency == 'medium' %}warning text-dark{% else %}info{% endif %} me-1">
+              Urgency: {{ gem.urgency }}
+            </span>
+            {% endif %}
+          </div>
+          {% endif %}
 
           <!-- Summary -->
           {% if gem.summary %}

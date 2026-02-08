@@ -27,12 +27,12 @@ Sort by **segment** or **confidence**.
 
 | Segment | What it tracks | Sub-segments |
 |---------|---------------|--------------|
-| **spend_map** | Companies you pay money to | subscriptions, renewals, invoices |
-| **partner_map** | Companies with programs you can join | affiliate, reseller, referral |
-| **prospect_map** | Companies you could sell to | marketing_gap, relevant_industry, low_sophistication |
-| **dormant_threads** | Stalled conversations with potential | user_owes_reply, awaiting_response |
-| **distribution_map** | Channels that could amplify you | newsletter, podcast, event, community |
-| **procurement_map** | Active buying signals | vendor_evaluation, rfp, budget_allocation |
+| **spend_map** | Companies you pay money to | `active_subscription`, `upcoming_renewal`, `churned_vendor` |
+| **partner_map** | Companies with programs you can join | `referral_program`, `general` |
+| **prospect_map** | Companies you could sell to | `hot_lead` (soph <= 3), `warm_prospect` (soph 4-5), `intelligence_value` (soph 6+) |
+| **dormant_threads** | Stalled conversations with potential | `unanswered` |
+| **distribution_map** | Channels that could amplify you | `newsletter`, `event_organizer`, `community` |
+| **procurement_map** | Active buying signals | `security_compliance`, `formal_rfp`, `evaluation` |
 
 ## How to use
 
@@ -61,9 +61,26 @@ Stage 6 assigns segments based on rules applied to sender profiles:
 - **Profile data** — industry, company_size, marketing_sophistication, has_partner_program
 - **Gem data** — which gem types exist for this sender
 - **Thread data** — conversation status (dormant, active, awaiting response)
-- **Entity data** — monetary signals, named contacts
+- **Entity data** — monetary signals, named contacts, procurement signals
 
 Each sender can appear in multiple segments. Confidence reflects how strongly the signals match the segment criteria.
+
+### Sub-segment classification details
+
+**Spend Map** sub-segments use intelligent classification:
+- `churned_vendor` — last contact was more than 180 days ago (detected from `last_contact` on the profile)
+- `upcoming_renewal` — future renewal dates exist in the sender's entity data
+- `active_subscription` — recent contact with no upcoming renewals
+
+**Distribution Map** sub-segments are classified from the sender's `offer_type_distribution` profile field:
+- `newsletter` — sender has newsletter or digest offer types
+- `event_organizer` — sender has event_invitation, webinar, or event offer types
+- `community` — sender has community or forum offer types
+
+**Procurement Map** sub-segments query the `extracted_entities` table for procurement signals:
+- `security_compliance` — mentions of security, compliance, SOC, GDPR, HIPAA
+- `formal_rfp` — mentions of RFP, RFQ, bid, request for proposal
+- `evaluation` — mentions of evaluation, trial, POC, proof of concept, pilot
 
 ## Related views
 

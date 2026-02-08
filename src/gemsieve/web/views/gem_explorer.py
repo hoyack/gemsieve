@@ -21,6 +21,7 @@ class GemExplorerView(CustomView):
             type_filter = request.query_params.get("type", "")
             status_filter = request.query_params.get("status", "")
             min_score = request.query_params.get("min_score", "")
+            urgency_filter = request.query_params.get("urgency", "")
             sort_by = request.query_params.get("sort", "score_desc")
 
             q = session.query(Gem)
@@ -64,6 +65,14 @@ class GemExplorerView(CustomView):
 
                 signals = explanation.get("signals", [])
 
+                estimated_value = explanation.get("estimated_value", "")
+                urgency = explanation.get("urgency", "")
+                confidence = explanation.get("confidence", 0)
+
+                # Apply urgency post-filter
+                if urgency_filter and urgency != urgency_filter:
+                    continue
+
                 gem_cards.append({
                     "id": g.id,
                     "gem_type": g.gem_type,
@@ -75,6 +84,9 @@ class GemExplorerView(CustomView):
                     "summary": explanation.get("summary", ""),
                     "signals": signals,
                     "actions": actions,
+                    "estimated_value": estimated_value,
+                    "urgency": urgency,
+                    "confidence": confidence,
                     "created_at": g.created_at,
                 })
 
@@ -99,6 +111,7 @@ class GemExplorerView(CustomView):
                 "type_filter": type_filter,
                 "status_filter": status_filter,
                 "min_score": min_score,
+                "urgency_filter": urgency_filter,
                 "sort_by": sort_by,
                 "total": len(gem_cards),
             },

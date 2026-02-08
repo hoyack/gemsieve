@@ -66,15 +66,36 @@ Drafts can be generated in three ways:
 2. **Pipeline Control** — run the engage stage from [Pipeline Control](pipeline.md) to generate drafts for all eligible gems
 3. **CLI** — `gemsieve generate --gem 42` or `gemsieve generate --strategy audit --top 10`
 
-## What the AI receives
+## Strategy-specific prompts
 
-The engagement prompt includes:
-- Gem type and explanation (why this opportunity was detected)
-- Sender's company profile (industry, size, ESP, sophistication)
-- Known contacts (names and roles)
-- Your service description and preferred tone (from config)
+Each draft is generated using one of 7 strategy-specific prompts, matched to the gem type:
 
-See [AI Inspector](ai-inspector.md) to view the exact prompts and responses.
+| Strategy | Approach | Key variables |
+|----------|----------|---------------|
+| **audit** | "I Audited Your Funnel" consultative outreach | Specific observations from offer/CTA analysis |
+| **revival** | Thread revival with context-aware follow-up | Thread subject, dormancy days |
+| **partner** | Partner program application/inquiry | Partner program URLs |
+| **renewal_negotiation** | Data-driven renewal negotiation | Renewal dates, monetary signals |
+| **industry_report** | Content-led engagement invitation | Shared industry data |
+| **mirror** | Mirror-match style (match sender's tone) | Audience overlap analysis |
+| **distribution_pitch** | Pitch to get featured | Content opportunity signals |
+
+All prompts share common context: gem explanation, sender profile (industry, size, ESP, sophistication), known contacts, and your positioning (service, tone, audience from config).
+
+The AI responds with a JSON object containing `subject_line` and `body`.
+
+See [AI Inspector](ai-inspector.md) to view the exact prompts and responses. Each entry is labeled with its strategy template ID (e.g., `STRATEGY_audit`).
+
+## Generation controls
+
+Two config settings control draft generation:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `engagement.preferred_strategies` | all 7 | Only generate drafts for gems whose strategy is in this list |
+| `engagement.max_outreach_per_day` | 10 | Maximum drafts generated per day (counts all drafts created today) |
+
+Both controls are bypassed when generating for a specific gem ID (via Gem Explorer's "Generate Draft" button or `gemsieve generate --gem <id>`).
 
 ## Related views
 

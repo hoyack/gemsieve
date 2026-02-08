@@ -9,6 +9,63 @@ from datetime import datetime, timezone
 
 from gemsieve.gmail.client import GmailClient
 
+# Signals that a message is asking a question or requesting action
+QUESTION_SIGNALS = [
+    re.compile(r"\?$", re.MULTILINE),
+    re.compile(r"^could you\b", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^can you\b", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^would you\b", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"\blet me know\b", re.IGNORECASE),
+    re.compile(r"\bthoughts\s*\?", re.IGNORECASE),
+    re.compile(r"\bwhat do you think\b", re.IGNORECASE),
+    re.compile(r"\bany (?:update|feedback|thoughts)\b", re.IGNORECASE),
+    re.compile(r"\bwhen can\b", re.IGNORECASE),
+    re.compile(r"\bhow (?:should|do|can|would)\b", re.IGNORECASE),
+    re.compile(r"\bplease (?:confirm|advise|reply|respond|send|share)\b", re.IGNORECASE),
+    re.compile(r"\blooking forward to (?:hearing|your)\b", re.IGNORECASE),
+    re.compile(r"\bwhat(?:'s| is) (?:the|your)\b", re.IGNORECASE),
+    re.compile(r"\bdo you have\b", re.IGNORECASE),
+    re.compile(r"\binterested in\b.*\?", re.IGNORECASE),
+]
+
+# Signals that a thread has been concluded — no response needed
+CONCLUDED_SIGNALS = [
+    re.compile(r"\bthanks?,? (?:for|so much)\b", re.IGNORECASE),
+    re.compile(r"\bsounds good\b", re.IGNORECASE),
+    re.compile(r"\bperfect,? thanks\b", re.IGNORECASE),
+    re.compile(r"\bgot it\b", re.IGNORECASE),
+    re.compile(r"\bno (?:further|more) (?:action|questions)\b", re.IGNORECASE),
+    re.compile(r"\bclosing (?:this|the loop)\b", re.IGNORECASE),
+    re.compile(r"\ball set\b", re.IGNORECASE),
+]
+
+
+def _classify_awaiting_response(last_message_body: str | None, is_from_user: bool) -> str:
+    """Classify who is awaiting a response based on message content.
+
+    Returns 'user', 'other', or 'none'.
+    """
+    if not last_message_body:
+        # No body to analyze, fall back to simple logic
+        return "other" if is_from_user else "user"
+
+    # Check concluded signals in the last 3 lines
+    lines = last_message_body.strip().split("\n")
+    tail = "\n".join(lines[-3:]) if len(lines) >= 3 else last_message_body
+    for pattern in CONCLUDED_SIGNALS:
+        if pattern.search(tail):
+            return "none"
+
+    # Check for question signals in the full body
+    has_question = any(p.search(last_message_body) for p in QUESTION_SIGNALS)
+
+    if is_from_user:
+        # User sent last message: only awaiting response from other if user asked a question
+        return "other" if has_question else "none"
+    else:
+        # Other sent last message: only awaiting response from user if they asked a question
+        return "user" if has_question else "none"
+
 
 class SyncEngine:
     """Handles full and incremental Gmail sync to local database."""
@@ -165,7 +222,7 @@ class SyncEngine:
         for row in thread_ids:
             tid = row["thread_id"]
             messages = self.db.execute(
-                """SELECT message_id, date, from_address, is_sent, subject
+                """SELECT message_id, date, from_address, is_sent, subject, body_text
                    FROM messages WHERE thread_id = ? ORDER BY date""",
                 (tid,),
             ).fetchall()
@@ -196,13 +253,13 @@ class SyncEngine:
                     user_participated = True
                     user_last_replied = msg["date"]
 
-            # Determine awaiting_response_from
+            # Determine awaiting_response_from using content-aware classifier
             if messages:
                 last_msg = messages[-1]
-                if last_msg["is_sent"]:
-                    awaiting = "other"
-                else:
-                    awaiting = "user"
+                awaiting = _classify_awaiting_response(
+                    last_msg["body_text"],
+                    bool(last_msg["is_sent"]),
+                )
             else:
                 awaiting = "none"
 

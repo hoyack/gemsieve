@@ -7,6 +7,43 @@ import sqlite3
 from datetime import datetime, timezone
 
 
+def _build_few_shot_examples(db: sqlite3.Connection) -> str:
+    """Build few-shot correction examples from classification overrides.
+
+    Queries the most recent overrides and formats them as examples
+    appended to the classification prompt to improve accuracy.
+
+    Returns formatted few-shot string (empty if no overrides).
+    """
+    rows = db.execute(
+        """SELECT co.sender_domain, co.field_name, co.original_value, co.corrected_value,
+                  ac.industry, ac.company_size_estimate, ac.sender_intent
+           FROM classification_overrides co
+           LEFT JOIN ai_classification ac ON co.message_id = ac.message_id
+              OR (co.sender_domain IS NOT NULL AND ac.message_id IN (
+                  SELECT pm.message_id FROM parsed_metadata pm WHERE pm.sender_domain = co.sender_domain LIMIT 1
+              ))
+           ORDER BY co.created_at DESC
+           LIMIT 10"""
+    ).fetchall()
+
+    if not rows:
+        return ""
+
+    examples = []
+    for row in rows:
+        domain = row["sender_domain"] or "unknown"
+        field = row["field_name"]
+        original = row["original_value"] or "unknown"
+        corrected = row["corrected_value"]
+        examples.append(
+            f"CORRECTION: For sender domain '{domain}', "
+            f"the {field} was classified as '{original}' but should be '{corrected}'."
+        )
+
+    return "\n\nPrevious classification corrections (use these to improve accuracy):\n" + "\n".join(examples)
+
+
 def classify_messages(
     db: sqlite3.Connection,
     model_spec: str = "ollama:mistral-nemo",
@@ -14,6 +51,7 @@ def classify_messages(
     max_body_chars: int = 2000,
     ai_config: dict | None = None,
     use_crew: bool = False,
+    retrain: bool = False,
 ) -> int:
     """Classify unprocessed messages using AI.
 
@@ -22,6 +60,7 @@ def classify_messages(
 
     Args:
         use_crew: If True, use CrewAI multi-agent mode instead of direct calls.
+        retrain: If True, append few-shot correction examples from overrides.
 
     Returns count of messages classified.
     """
@@ -41,6 +80,11 @@ def classify_messages(
     if not rows:
         return 0
 
+    # Build few-shot examples if retrain is enabled
+    few_shot_suffix = ""
+    if retrain:
+        few_shot_suffix = _build_few_shot_examples(db)
+
     # Group by sender domain
     domain_messages: dict[str, list] = {}
     for row in rows:
@@ -55,6 +99,13 @@ def classify_messages(
 
         # Take up to 3 most representative messages for classification
         sample = messages[:3]
+
+        # Check for message-scoped overrides (apply per-message later)
+        msg_overrides = {}
+        for m in messages:
+            m_ovr = _get_message_overrides(db, m["message_id"])
+            if m_ovr:
+                msg_overrides[m["message_id"]] = m_ovr
 
         # Get entity summary for context
         entity_summary = _get_entity_summary(db, [m["message_id"] for m in sample])
@@ -85,7 +136,7 @@ def classify_messages(
                 from gemsieve.ai.prompts import CLASSIFICATION_PROMPT
 
                 provider, model_name = get_provider(model_spec, config=ai_config)
-                prompt = CLASSIFICATION_PROMPT.format(**sender_data)
+                prompt = CLASSIFICATION_PROMPT.format(**sender_data) + few_shot_suffix
                 result = provider.complete(
                     prompt=prompt,
                     model=model_name,
@@ -96,7 +147,7 @@ def classify_messages(
             print(f"  AI classification failed for {domain}: {e}")
             continue
 
-        # Apply overrides
+        # Apply sender-scoped overrides
         for field_name, value in overrides.items():
             result[field_name] = value
 
@@ -104,6 +155,14 @@ def classify_messages(
 
         # Store classification for all messages from this sender
         for m in messages:
+            # Apply message-scoped overrides on top
+            final_result = dict(result)
+            m_ovr = msg_overrides.get(m["message_id"], {})
+            for field_name, value in m_ovr.items():
+                final_result[field_name] = value
+
+            final_has_override = has_override or bool(m_ovr)
+
             db.execute(
                 """INSERT OR REPLACE INTO ai_classification
                    (message_id, industry, company_size_estimate,
@@ -114,19 +173,19 @@ def classify_messages(
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     m["message_id"],
-                    result.get("industry", ""),
-                    result.get("company_size_estimate", ""),
-                    result.get("marketing_sophistication", 0),
-                    result.get("sender_intent", ""),
-                    result.get("product_type", ""),
-                    result.get("product_description", ""),
-                    json.dumps(result.get("pain_points_addressed", [])),
-                    result.get("target_audience", ""),
-                    result.get("partner_program_detected", False),
-                    result.get("renewal_signal_detected", False),
-                    result.get("confidence", 0.0),
+                    final_result.get("industry", ""),
+                    final_result.get("company_size_estimate", ""),
+                    final_result.get("marketing_sophistication", 0),
+                    final_result.get("sender_intent", ""),
+                    final_result.get("product_type", ""),
+                    final_result.get("product_description", ""),
+                    json.dumps(final_result.get("pain_points_addressed", [])),
+                    final_result.get("target_audience", ""),
+                    final_result.get("partner_program_detected", False),
+                    final_result.get("renewal_signal_detected", False),
+                    final_result.get("confidence", 0.0),
                     model_spec,
-                    has_override,
+                    final_has_override,
                 ),
             )
             classified += 1
@@ -142,6 +201,22 @@ def _get_sender_overrides(db: sqlite3.Connection, sender_domain: str) -> dict:
            WHERE sender_domain = ? AND override_scope = 'sender'
            ORDER BY created_at DESC""",
         (sender_domain,),
+    ).fetchall()
+
+    overrides = {}
+    for row in rows:
+        if row["field_name"] not in overrides:
+            overrides[row["field_name"]] = row["corrected_value"]
+    return overrides
+
+
+def _get_message_overrides(db: sqlite3.Connection, message_id: str) -> dict:
+    """Get active overrides for a specific message."""
+    rows = db.execute(
+        """SELECT field_name, corrected_value FROM classification_overrides
+           WHERE message_id = ? AND override_scope = 'message'
+           ORDER BY created_at DESC""",
+        (message_id,),
     ).fetchall()
 
     overrides = {}

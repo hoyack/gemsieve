@@ -58,6 +58,54 @@ def test_extract_metadata_idempotent(db, sample_message):
     assert count2 == 0  # already processed
 
 
+def test_extract_metadata_new_fields(db):
+    """Metadata extraction populates x_mailer, mail_server, precedence, feedback_id."""
+    import json
+    from tests.conftest import insert_message
+
+    msg = {
+        "message_id": "msg_new_fields",
+        "thread_id": "thread_nf",
+        "date": "Mon, 15 Jan 2024 10:30:00 +0000",
+        "from_address": "test@newfields.com",
+        "from_name": "Test",
+        "reply_to": None,
+        "to_addresses": json.dumps([]),
+        "cc_addresses": json.dumps([]),
+        "subject": "Test new fields",
+        "headers_raw": json.dumps({
+            "from": ["Test <test@newfields.com>"],
+            "x-mailer": ["MailChimp Mailer 2.0"],
+            "received": [
+                "by 2002:a17:90a:c34c with SMTP id local",
+                "from mail-outbound.newfields.com [10.0.0.1] by mx.google.com",
+            ],
+            "precedence": ["bulk"],
+            "feedback-id": ["123456:campaign_789:newfields"],
+        }),
+        "body_html": None,
+        "body_text": "Test body",
+        "labels": json.dumps(["INBOX"]),
+        "snippet": "Test body",
+        "size_estimate": 100,
+        "is_sent": False,
+    }
+    insert_message(db, msg)
+
+    esp_rules_path = os.path.join(os.path.dirname(__file__), "..", "esp_rules.yaml")
+    extract_metadata(db, esp_rules_path=esp_rules_path)
+
+    row = db.execute(
+        "SELECT * FROM parsed_metadata WHERE message_id = 'msg_new_fields'"
+    ).fetchone()
+
+    assert row is not None
+    assert row["x_mailer"] == "MailChimp Mailer 2.0"
+    assert row["mail_server"] == "mail-outbound.newfields.com"
+    assert row["precedence"] == "bulk"
+    assert row["feedback_id"] == "123456:campaign_789:newfields"
+
+
 def test_sender_temporal(db, sample_message):
     """Temporal patterns are computed for sender domains."""
     insert_message(db, sample_message)

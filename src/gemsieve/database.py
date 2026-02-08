@@ -48,6 +48,35 @@ def reset_db(config: Config | None = None) -> sqlite3.Connection:
     return conn
 
 
+def migrate_db(conn: sqlite3.Connection) -> list[str]:
+    """Run schema migrations for columns that may be missing from older databases.
+
+    Uses PRAGMA table_info to detect missing columns and ALTER TABLE to add them.
+    Returns list of migration actions taken.
+    """
+    migrations: list[str] = []
+
+    # Define expected columns per table: (table, column, type)
+    expected_columns = [
+        ("parsed_metadata", "x_mailer", "TEXT"),
+        ("parsed_metadata", "mail_server", "TEXT"),
+        ("parsed_metadata", "precedence", "TEXT"),
+        ("parsed_metadata", "feedback_id", "TEXT"),
+    ]
+
+    for table, column, col_type in expected_columns:
+        existing = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing_names = {row["name"] for row in existing}
+        if column not in existing_names:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+            migrations.append(f"Added {table}.{column} ({col_type})")
+
+    if migrations:
+        conn.commit()
+
+    return migrations
+
+
 def db_stats(conn: sqlite3.Connection) -> dict[str, int]:
     """Return row counts for all tables."""
     tables = [

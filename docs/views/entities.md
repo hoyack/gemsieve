@@ -15,7 +15,7 @@ The Entities view shows the output of Stage 3 (entity extraction). GemSieve uses
 | **confidence** | Extraction confidence (0.0 to 1.0) |
 | **source** | Detection method: `spacy` (NLP model) or `regex` (pattern matching) |
 
-Additional columns in detail view: entity_normalized, context.
+Additional columns in detail view: entity_normalized, context, relationship (for PERSON entities).
 
 ## Searching
 
@@ -61,13 +61,47 @@ python -m spacy download en_core_web_trf   # transformer-based, higher accuracy
 
 | Type | Examples | Source |
 |------|----------|--------|
-| PERSON | "John Smith", "Sarah" | spaCy NER |
+| PERSON | "John Smith", "Sarah" | spaCy NER + CC headers |
 | ORG | "Acme Corp", "Google" | spaCy NER |
 | MONEY | "$5,000", "99/mo" | spaCy + regex |
 | DATE | "January 2025", "next Tuesday" | spaCy NER |
 | ROLE | "CEO", "VP of Marketing" | Regex patterns |
 | PHONE | "+1-555-0100" | Regex patterns |
 | URL | "https://example.com" | Regex patterns |
+| procurement_signal | "security compliance", "RFP" | Regex patterns |
+
+### Relationship classification
+
+PERSON entities are now classified with a relationship type stored in the `context` field:
+
+| Relationship | Meaning |
+|-------------|---------|
+| `decision_maker` | Person with a senior title (CEO, VP, Director, etc.) |
+| `automated` | Address appears to be automated (noreply, support, etc.) |
+| `vendor_contact` | Sender's own address or a role-based contact |
+| `peer` | Named person without a senior title |
+
+This classification helps gem detection prioritize threads with decision-maker involvement and filters out automated contacts.
+
+### CC extraction
+
+Person entities are extracted from CC addresses in addition to the email body, enabling detection of stakeholders who are copied on conversations but may not be the primary sender.
+
+### Date normalization
+
+Date entities are normalized with a `renewal:future` tag in `entity_normalized` when the date is in the future, helping identify upcoming renewal windows and deadlines.
+
+### Config toggles
+
+Entity extraction respects these `entity_extraction` config settings:
+
+| Toggle | Default | Effect |
+|--------|---------|--------|
+| `extract_monetary` | true | Enable/disable monetary entity extraction |
+| `extract_dates` | true | Enable/disable date entity extraction |
+| `extract_procurement` | true | Enable/disable procurement signal extraction |
+
+Set any toggle to `false` in `config.yaml` to skip that entity type during extraction.
 
 ## Related views
 

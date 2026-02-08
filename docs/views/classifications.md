@@ -54,7 +54,15 @@ Sort by **industry**, **marketing_sophistication**, **ai_confidence**, or **comp
 
 1. Search for a specific sender domain across all their messages
 2. All messages from the same domain should have the same classification (they're classified per-domain, not per-message)
-3. If `has_override` is true, a human correction was applied
+3. If `has_override` is true, a human correction was applied (sender-scoped or message-scoped)
+
+### Improve classification accuracy over time
+
+1. When you find wrong classifications, add overrides via the CLI or [Overrides](overrides.md) view
+2. Run `gemsieve classify --retrain` or enable the **Retrain** toggle in [Pipeline Control](pipeline.md)
+3. The `--retrain` flag appends the last 10 overrides as few-shot correction examples to the classification prompt
+4. Over time, the AI learns from your corrections without needing model fine-tuning
+5. Message-scoped overrides take priority over sender-scoped overrides
 
 ## Sender intent values
 

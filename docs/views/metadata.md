@@ -17,7 +17,16 @@ The Metadata view shows the output of Stage 1 (header forensics). For each messa
 | **sending_ip** | IP address that sent the email |
 | **is_bulk** | Whether the email appears to be bulk/marketing (vs. transactional or personal) |
 
-Additional columns in detail view: dkim_domain, envelope_sender, list_unsubscribe_url, parsed_at.
+Additional columns in detail view: dkim_domain, envelope_sender, list_unsubscribe_url, x_mailer, mail_server, precedence, feedback_id, parsed_at.
+
+### New metadata fields
+
+| Column | Description |
+|--------|-------------|
+| **x_mailer** | Email client or sending library (extracted from `X-Mailer` header, e.g., "MailChimp Mailer") |
+| **mail_server** | Origin mail server hostname (extracted from outermost `Received` header via regex) |
+| **precedence** | Email precedence level (`bulk`, `list`, `junk`, etc. from `Precedence` header) |
+| **feedback_id** | Feedback loop identifier (from `Feedback-ID` or `X-Feedback-ID` headers, used by ESPs for complaint tracking) |
 
 ## Searching
 

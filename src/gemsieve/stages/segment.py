@@ -235,7 +235,7 @@ def _opportunity_score(
 
 
 def _classify_spend_subsegment(db, profile) -> list[tuple[str, float]]:
-    """Classify spend map sub-segments."""
+    """Classify spend map sub-segments with churned vendor detection."""
     subs = []
     renewal_dates = []
     try:
@@ -243,7 +243,22 @@ def _classify_spend_subsegment(db, profile) -> list[tuple[str, float]]:
     except (json.JSONDecodeError, TypeError):
         pass
 
-    if renewal_dates:
+    # Churned vendor detection: if last_contact > 180 days ago
+    last_contact = profile["last_contact"]
+    is_churned = False
+    if last_contact:
+        try:
+            from email.utils import parsedate_to_datetime
+            last_dt = parsedate_to_datetime(last_contact)
+            days = (datetime.now(timezone.utc) - last_dt).days
+            if days > 180:
+                is_churned = True
+        except Exception:
+            pass
+
+    if is_churned:
+        subs.append(("churned_vendor", 0.8))
+    elif renewal_dates:
         subs.append(("upcoming_renewal", 0.9))
     else:
         subs.append(("active_subscription", 0.7))
@@ -274,13 +289,50 @@ def _classify_prospect_subsegment(db, profile) -> list[tuple[str, float]]:
 
 
 def _classify_distribution_subsegment(db, profile) -> list[tuple[str, float]]:
-    """Classify distribution map sub-segments."""
-    return [("newsletter", 0.7)]
+    """Classify distribution map sub-segments using offer_type_distribution."""
+    offer_dist = {}
+    try:
+        offer_dist = json.loads(profile["offer_type_distribution"]) if profile["offer_type_distribution"] else {}
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    subs = []
+    if "newsletter" in offer_dist or "digest" in offer_dist:
+        subs.append(("newsletter", 0.8))
+    if "event_invitation" in offer_dist or "event" in offer_dist or "webinar" in offer_dist:
+        subs.append(("event_organizer", 0.7))
+    if "community" in offer_dist or "forum" in offer_dist:
+        subs.append(("community", 0.6))
+
+    return subs or [("newsletter", 0.7)]
 
 
 def _classify_procurement_subsegment(db, profile) -> list[tuple[str, float]]:
-    """Classify procurement map sub-segments."""
-    return [("evaluation", 0.6)]
+    """Classify procurement map sub-segments using entity data."""
+    domain = profile["sender_domain"]
+
+    procurement_entities = db.execute(
+        """SELECT ee.entity_value, ee.entity_normalized
+           FROM extracted_entities ee
+           JOIN parsed_metadata pm ON ee.message_id = pm.message_id
+           WHERE pm.sender_domain = ? AND ee.entity_type = 'procurement_signal'""",
+        (domain,),
+    ).fetchall()
+
+    if not procurement_entities:
+        return [("evaluation", 0.6)]
+
+    keywords = " ".join(e["entity_value"].lower() for e in procurement_entities)
+
+    subs = []
+    if any(kw in keywords for kw in ("security", "compliance", "soc", "gdpr", "hipaa")):
+        subs.append(("security_compliance", 0.8))
+    if any(kw in keywords for kw in ("rfp", "request for proposal", "rfq", "bid")):
+        subs.append(("formal_rfp", 0.9))
+    if any(kw in keywords for kw in ("evaluation", "trial", "poc", "proof of concept", "pilot")):
+        subs.append(("evaluation", 0.7))
+
+    return subs or [("evaluation", 0.6)]
 
 
 def _matches_rules(profile, rules: dict, db: sqlite3.Connection) -> bool:

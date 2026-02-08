@@ -33,7 +33,7 @@ Four interactive Chart.js graphs appear below the stats:
 | Chart | Type | What it shows |
 |-------|------|--------------|
 | **Gem Type Distribution** | Doughnut | Breakdown of gems by type (dormant threads, partner programs, etc.) |
-| **Top Gems by Score** | Horizontal bar | The 10 highest-scoring gems with their sender domains |
+| **Top Gems by Score** | Horizontal bar | The 10 highest-scoring gems with sender domains, estimated value, and urgency |
 | **Industry Breakdown** | Pie | Distribution of classified senders by industry |
 | **Messages by ESP** | Bar | How many messages were sent via each email service provider |
 

@@ -36,7 +36,7 @@ router = APIRouter(tags=["api"])
 
 
 @router.post("/pipeline/run/{stage}")
-async def run_pipeline_stage(stage: str):
+async def run_pipeline_stage(stage: str, retrain: bool = False):
     """Trigger a pipeline stage. Returns the run_id."""
     if stage not in STAGE_MAP and stage != "all":
         raise HTTPException(400, f"Unknown stage: {stage}. Options: {list(STAGE_MAP.keys())}")
@@ -45,11 +45,17 @@ async def run_pipeline_stage(stage: str):
         # Run stages 1-6 sequentially (skip engage)
         run_ids = []
         for s in ["metadata", "content", "entities", "classify", "profile", "segment"]:
-            rid = task_manager.run_stage(s)
+            kwargs = {}
+            if s == "classify" and retrain:
+                kwargs["retrain"] = True
+            rid = task_manager.run_stage(s, **kwargs)
             run_ids.append(rid)
         return {"status": "submitted", "run_ids": run_ids, "stages": list(STAGE_MAP.keys())[:6]}
 
-    run_id = task_manager.run_stage(stage)
+    kwargs = {}
+    if stage == "classify" and retrain:
+        kwargs["retrain"] = True
+    run_id = task_manager.run_stage(stage, **kwargs)
     return {"status": "submitted", "run_id": run_id, "stage": stage}
 
 
@@ -159,14 +165,21 @@ async def top_gems(n: int = 10):
             .limit(n)
             .all()
         )
-        return [
-            {
+        result = []
+        for g in rows:
+            explanation = {}
+            try:
+                explanation = json.loads(g.explanation) if g.explanation else {}
+            except (json.JSONDecodeError, TypeError):
+                pass
+            result.append({
                 "id": g.id, "gem_type": g.gem_type,
                 "sender_domain": g.sender_domain,
                 "score": g.score, "status": g.status,
-            }
-            for g in rows
-        ]
+                "estimated_value": explanation.get("estimated_value", ""),
+                "urgency": explanation.get("urgency", ""),
+            })
+        return result
     finally:
         session.close()
 

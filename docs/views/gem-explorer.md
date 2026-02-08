@@ -12,6 +12,7 @@ Filter gems using controls at the top:
 |--------|---------|
 | **Type** | All types, or select one: dormant_warm_thread, unanswered_ask, weak_marketing_lead, partner_program, renewal_leverage, vendor_upsell, distribution_channel, co_marketing, industry_intel, procurement_signal |
 | **Status** | All, `new` (not acted on), `acted` (engaged), `dismissed` |
+| **Urgency** | All, `high`, `medium`, `low` — filters by the gem's urgency level (parsed from the explanation JSON) |
 | **Min Score** | Only show gems scoring at or above this threshold (0-100) |
 | **Sort** | Score high to low (default), Score low to high, Newest first |
 
@@ -34,6 +35,8 @@ Each gem is displayed as a card containing:
 | **Sender domain** | The email domain this gem relates to |
 | **Industry** | The AI-classified industry (if available) |
 | **Score bar** | Visual 0-100 progress bar. Green (70+), yellow (40-69), gray (below 40) |
+| **Value badge** | Estimated commercial value: `high` (red), `medium` (yellow), `low` (blue). Derived from the gem explanation's `estimated_value` field. |
+| **Urgency badge** | Time sensitivity: `high` (red), `medium` (yellow), `low` (blue). Derived from the gem explanation's `urgency` field. |
 | **Summary** | Brief explanation of why this gem was detected |
 | **Signal chips** | Pill badges showing the specific signals that triggered this gem (e.g., "user_participated", "days_dormant > 30"). Hover for evidence text. Up to 5 shown. |
 | **Actions** | Recommended next steps (e.g., "Reply to the original thread", "Mention your relevant experience"). Up to 3 shown. |
@@ -51,6 +54,12 @@ Each gem is displayed as a card containing:
 2. Sort by **Score (high to low)**
 3. Browse the cards — high-scoring gems have the most commercial signals
 
+### Focus on urgent opportunities
+
+1. Select **Urgency** = `high` to find time-sensitive gems
+2. High-urgency gems include: renewal windows approaching, unanswered asks, active procurement signals
+3. Combine with **Min Score** to find the highest-value urgent opportunities
+
 ### Focus on a specific opportunity type
 
 1. Select a **Type** filter (e.g., `partner_program`)
@@ -60,10 +69,12 @@ Each gem is displayed as a card containing:
 ### Generate outreach
 
 1. Find a promising gem
-2. Click **Generate Draft** — this triggers the AI to create a personalized outreach message
+2. Click **Generate Draft** — this triggers the AI to create a personalized outreach message using the gem's matched strategy (audit, revival, partner, etc.)
 3. The toast notification shows the pipeline run ID
 4. Go to [Drafts](drafts.md) to see the generated message
 5. Review and customize before sending
+
+Note: Draft generation respects the `max_outreach_per_day` limit from config. If the daily limit is reached, no new drafts are generated. Generating for a specific gem via the button bypasses the `preferred_strategies` filter.
 
 ### Investigate a gem
 
@@ -74,6 +85,23 @@ Each gem is displayed as a card containing:
    - Complete recommended actions list
 2. Cross-reference with [Profiles](profiles.md) by searching for the sender domain
 3. Check [AI Inspector](ai-inspector.md) to see the AI classification that informed the gem
+
+## Understanding value and urgency
+
+Every gem includes `estimated_value` and `urgency` fields in its explanation, determined by gem type and signals:
+
+| Gem Type | Value Rule | Urgency Rule |
+|----------|-----------|--------------|
+| `dormant_warm_thread` | By entity signals (decision-makers, money) | By dormancy range (14-30d = high, 30-90d = medium, 90d+ = low) |
+| `unanswered_ask` | medium-high | high |
+| `weak_marketing_lead` | By company_size (small = high) | low |
+| `partner_program` | medium | low |
+| `renewal_leverage` | By monetary signals | By renewal date proximity |
+| `distribution_channel` | By activity level | low |
+| `co_marketing` | medium | low |
+| `vendor_upsell` | low | medium |
+| `industry_intel` | low | low |
+| `procurement_signal` | high | high |
 
 ## Understanding gem scores
 

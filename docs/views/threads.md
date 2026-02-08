@@ -53,8 +53,22 @@ These fields are calculated by `SyncEngine._update_threads()` after ingestion:
 
 - **participant_count** — unique sender addresses across all messages in the thread
 - **days_dormant** — `(now - last_message_date)` in days
-- **awaiting_response_from** — `other` if the last message was sent by you, `user` if it was sent by someone else
+- **awaiting_response_from** — determined by content-aware analysis of the last message (see below)
 - **user_participated** — true if any message in the thread has `is_sent = true`
+
+### Content-aware response detection
+
+The `awaiting_response_from` field uses intelligent analysis of the last message body, not just simple sent/received heuristics:
+
+| Scenario | Result | Logic |
+|----------|--------|-------|
+| Other person asks a question | `user` | Question signals detected (e.g., "could you...?", "what do you think?", "let me know") |
+| You ask a question | `other` | Your message contains question signals |
+| Thread concluded with thanks | `none` | Concluded signals detected in last 3 lines (e.g., "thanks for everything", "sounds good") |
+| Other sends informational update | `none` | No question signals, no concluded signals |
+| Empty/missing body | Fallback to sent/received | If sent by other = `user`, if sent by you = `other` |
+
+This prevents false positives where a thank-you email would previously mark the thread as "awaiting your reply" simply because the other person sent the last message.
 
 ## Related views
 

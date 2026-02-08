@@ -10,13 +10,13 @@ A horizontal flow diagram at the top shows all 7 stages in order, with arrows in
 
 The stages in order:
 
-1. **metadata** — Header forensics and ESP fingerprinting
-2. **content** — HTML parsing, offer detection, CTA extraction
-3. **entities** — Named entity recognition (people, orgs, money, dates)
-4. **classify** — AI-powered sender classification
-5. **profile** — Sender profile building and gem detection
-6. **segment** — Economic segmentation and opportunity scoring
-7. **engage** — AI-generated engagement drafts
+1. **metadata** — Header forensics, ESP fingerprinting, X-Mailer and mail server extraction
+2. **content** — HTML parsing, offer detection, CTA extraction, marketing footer stripping
+3. **entities** — Named entity recognition (people, orgs, money, dates) with relationship classification
+4. **classify** — AI-powered sender classification (supports `--retrain` for few-shot feedback)
+5. **profile** — Sender profile building, warm signal detection, deterministic scoring, and gem detection
+6. **segment** — Economic segmentation with refined sub-segments and opportunity scoring
+7. **engage** — Strategy-specific AI engagement drafts (7 distinct strategy prompts)
 
 ## Running stages
 
@@ -28,6 +28,8 @@ Each stage has a card with:
 - **Output rows** — how many rows exist in the output table
 - **Last run** — status badge (completed/running/failed) and item count from the most recent run
 - **Run button** — click to trigger the stage
+
+The **classify** stage card includes a **Retrain** toggle. When enabled, the classification prompt is augmented with few-shot correction examples from your classification overrides, improving accuracy over time. See [Overrides](overrides.md) for details on how overrides feed back into classification.
 
 When you click a Run button:
 1. The button changes to a spinner

@@ -29,14 +29,14 @@ Sort by **score**, **gem_type**, **status**, or **created_at**. Default sort is 
 
 | Type | What it detects |
 |------|----------------|
-| `dormant_warm_thread` | Stalled conversations where you owe a reply |
+| `dormant_warm_thread` | Stalled conversations with warm signals (pricing, meeting requests, decision-makers) |
 | `unanswered_ask` | Recent messages awaiting your response |
 | `weak_marketing_lead` | Senders with marketing gaps you can fill |
 | `partner_program` | Vendors with affiliate/reseller programs |
 | `renewal_leverage` | Upcoming SaaS renewals (negotiation windows) |
 | `vendor_upsell` | Vendors pitching upgrades (they value your business) |
-| `distribution_channel` | Newsletters/podcasts/events that could amplify you |
-| `co_marketing` | Senders whose audience overlaps with yours |
+| `distribution_channel` | Newsletters/podcasts/events that could amplify you (includes content opportunity signals) |
+| `co_marketing` | Senders whose audience overlaps with yours (requires `engagement.your_audience` config) |
 | `industry_intel` | Senders providing useful market intelligence |
 | `procurement_signal` | Active buying or vendor evaluation signals |
 
@@ -44,7 +44,10 @@ Sort by **score**, **gem_type**, **status**, or **created_at**. Default sort is 
 
 Click any gem row to see the full record, including:
 
-- **explanation** — JSON object with structured signals and evidence for why this gem was detected. Each signal has a name and supporting evidence text.
+- **explanation** — JSON object with structured signals and evidence for why this gem was detected. Each signal has a name and supporting evidence text. Also contains:
+  - `estimated_value` — commercial value assessment (low/medium/high), determined by gem-type-specific rules (e.g., company size for marketing leads, monetary signals for renewals)
+  - `urgency` — time sensitivity (low/medium/high), determined by gem-type-specific rules (e.g., dormancy range for stalled threads, renewal date proximity)
+  - `confidence` — detection confidence score
 - **recommended_actions** — JSON array of suggested next steps (e.g., "Reply to the original thread mentioning your relevant experience")
 - **source_message_ids** — which messages triggered this gem's detection
 - **thread_id** — for thread-related gems, links to the conversation

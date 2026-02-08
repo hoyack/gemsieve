@@ -19,11 +19,11 @@ Inbox       & Sync         Extract       Parser       Extract      Classify     
 | Stage | Name | AI Required |
 |-------|------|-------------|
 | 0 | Ingestion & Sync | No |
-| 1 | Metadata Extraction (header forensics, ESP fingerprinting) | No |
-| 2 | Content Parsing (HTML, offers, CTAs, links) | No |
-| 3 | Entity Extraction (people, orgs, money, dates) | No (spaCy NLP) |
-| 4 | AI Classification (industry, intent, sophistication) | Yes |
-| 5 | Sender Profiling & Gem Detection | No (rule-based) |
+| 1 | Metadata Extraction (header forensics, ESP fingerprinting, mail server, X-Mailer) | No |
+| 2 | Content Parsing (HTML, offers, CTAs, links, footer stripping) | No |
+| 3 | Entity Extraction (people, orgs, money, dates, relationship classification) | No (spaCy NLP) |
+| 4 | AI Classification (industry, intent, sophistication) + feedback loop | Yes |
+| 5 | Sender Profiling & Gem Detection (warm signals, deterministic scoring) | No (rule-based) |
 | 6 | Segmentation & Opportunity Scoring | No |
 | 7 | Engagement Draft Generation | Yes |
 
@@ -35,18 +35,18 @@ GemSieve detects 10 types of commercial opportunities:
 
 | Gem Type | What it finds |
 |----------|--------------|
-| `dormant_warm_thread` | Stalled conversations where you owe a reply |
+| `dormant_warm_thread` | Stalled conversations with warm signals (pricing questions, meeting requests, decision-maker involvement) |
 | `unanswered_ask` | Recent messages awaiting your response |
 | `weak_marketing_lead` | Senders with marketing gaps you can fill |
 | `partner_program` | Vendors with affiliate/reseller programs you can join |
 | `renewal_leverage` | Upcoming SaaS renewals = negotiation windows |
 | `vendor_upsell` | Vendors pitching upgrades (they value your business) |
-| `distribution_channel` | Newsletters/podcasts/events that could amplify you |
-| `co_marketing` | Senders whose audience overlaps with yours |
+| `distribution_channel` | Newsletters/podcasts/events that could amplify you (includes content opportunity signals like guest posts, speaker applications) |
+| `co_marketing` | Senders whose audience overlaps with yours (requires `engagement.your_audience` config) |
 | `industry_intel` | Senders providing useful market intelligence |
 | `procurement_signal` | Active buying or vendor evaluation signals |
 
-Every gem includes a structured explanation of *why* it was detected, a confidence score, and recommended next actions.
+Every gem includes a structured explanation with confidence score, **estimated value** (low/medium/high), **urgency** level, and recommended next actions.
 
 ## Installation
 
@@ -172,6 +172,9 @@ ai:
 
 entity_extraction:
   spacy_model: "en_core_web_sm"            # or en_core_web_trf for accuracy
+  extract_monetary: true                   # toggle monetary entity extraction
+  extract_dates: true                      # toggle date entity extraction
+  extract_procurement: true                # toggle procurement signal extraction
 
 scoring:
   target_industries:                       # industries you want to sell to
@@ -189,12 +192,24 @@ scoring:
     dormant_thread_bonus: 8
     partner_bonus: 5
     renewal_bonus: 3
+  dormant_thread:                          # dormant thread gem detection tuning
+    min_dormancy_days: 14
+    require_human_sender: true             # skip auto-generated/transactional threads
 
 engagement:
   your_name: "Brandon"
   your_service: "AI-powered marketing automation"
   your_tone: "direct, technical, peer-to-peer"
-  your_audience: "SaaS companies and agencies"
+  your_audience: "SaaS companies and agencies"  # used for co_marketing audience overlap
+  preferred_strategies:                    # only generate drafts for these strategies
+    - "audit"
+    - "revival"
+    - "partner"
+    - "renewal_negotiation"
+    - "industry_report"
+    - "mirror"
+    - "distribution_pitch"
+  max_outreach_per_day: 10                 # daily engagement draft limit
 ```
 
 See `config.example.yaml` for the full reference with all options.
@@ -220,23 +235,24 @@ gemsieve gems --explain 1
 Run each stage independently for more control:
 
 ```bash
-# Stage 0: Pull messages from Gmail
+# Stage 0: Pull messages from Gmail (content-aware thread response tracking)
 gemsieve ingest --query "newer_than:1y"
 gemsieve ingest --query "category:promotions" --append   # add specific category
 gemsieve ingest --sync                                    # incremental sync
 
-# Stage 1: Parse email headers, identify ESPs
+# Stage 1: Parse email headers, identify ESPs, extract X-Mailer/mail server
 gemsieve parse --stage metadata
 
-# Stage 2: Parse HTML content, extract offers/CTAs/links
+# Stage 2: Parse HTML content, extract offers/CTAs/links, strip marketing footers
 gemsieve parse --stage content
 
-# Stage 3: Extract entities (people, orgs, money, dates)
+# Stage 3: Extract entities (people, orgs, money, dates) with relationship classification
 gemsieve parse --stage entities
 
 # Stage 4: AI classification
 gemsieve classify --model ollama:mistral-nemo
 gemsieve classify --model anthropic:claude-sonnet-4-5-20250514 --batch-size 5
+gemsieve classify --retrain                      # append few-shot corrections from overrides
 
 # Stage 5: Build profiles and detect gems
 gemsieve profile
@@ -244,7 +260,7 @@ gemsieve gems                     # runs gem detection
 gemsieve gems --list              # view all gems
 gemsieve gems --top 20            # top 20 by score
 
-# Stage 7: Generate engagement drafts
+# Stage 7: Generate engagement drafts (7 strategy-specific prompts)
 gemsieve generate --gem 42                       # specific gem
 gemsieve generate --strategy audit --top 20      # batch by strategy
 gemsieve generate --strategy revival --all       # all dormant threads
@@ -294,9 +310,9 @@ uvicorn gemsieve.web.app:create_app --factory --reload
 The admin UI provides:
 
 - **Dashboard** — stats cards, Chart.js graphs (gem distribution, industry breakdown, ESP usage, top gems by score), pipeline health indicators, recent activity feed
-- **Pipeline Control** — trigger any stage from the browser, run all stages sequentially, live SSE progress streaming, run history with status/duration/item counts
-- **AI Inspector** — full audit trail of every AI call: rendered prompts, system prompts, raw/parsed responses, model used, duration. Filterable by stage and sender domain. Includes a prompt library reference.
-- **Gem Explorer** — filterable card grid of all gems with score bars, signal chips, recommended actions, and a "Generate Draft" button that triggers engagement generation
+- **Pipeline Control** — trigger any stage from the browser, run all stages sequentially, live SSE progress streaming, run history with status/duration/item counts. Supports `--retrain` toggle for classification.
+- **AI Inspector** — full audit trail of every AI call: rendered prompts, system prompts, raw/parsed responses, model used, duration. Filterable by stage and sender domain. Includes a **strategy prompt library** showing all 7 engagement strategies with gem type mappings.
+- **Gem Explorer** — filterable card grid of all gems with score bars, **estimated value/urgency badges**, signal chips, recommended actions, urgency filter dropdown, and a "Generate Draft" button that triggers engagement generation
 - **CRUD table views** — browse and search all 16 database tables (messages, threads, metadata, content, entities, classifications, profiles, gems, segments, drafts, pipeline runs, AI audit log)
 
 For detailed documentation on every view and feature, see the [Web Admin Manual](docs/manual.md).
@@ -309,21 +325,30 @@ DATABASE_URL=postgresql://user:pass@localhost/gemsieve
 
 ### Classification overrides
 
-Correct AI classifications that are wrong. Overrides feed back into future runs:
+Correct AI classifications that are wrong. Overrides feed back into future runs via the few-shot feedback loop:
 
 ```bash
 # Override at the sender level (applies to all messages from that domain)
 gemsieve override --sender acme.com --field industry --value "Developer Tools"
 
-# Override a specific message
+# Override a specific message (message-scoped, highest priority)
 gemsieve override --message abc123 --field sender_intent --value "partnership_pitch"
 
 # View and audit overrides
 gemsieve overrides --list
 gemsieve overrides --stats           # shows override rate per field
+
+# Re-classify with feedback: appends recent overrides as few-shot corrections
+gemsieve classify --retrain
 ```
 
 Overridable fields: `industry`, `company_size_estimate`, `marketing_sophistication`, `sender_intent`, `product_type`, `product_description`, `target_audience`.
+
+Override scopes:
+- **sender** — applies to all messages from that domain
+- **message** — applies to a single message, overrides sender-scoped values
+
+When `--retrain` is used, the last 10 overrides are formatted as few-shot correction examples and appended to the classification prompt, improving accuracy over time.
 
 ### Exporting data
 
@@ -349,12 +374,12 @@ Each sender can belong to multiple segments simultaneously:
 
 | Segment | What it tracks |
 |---------|---------------|
-| **Spend Map** | Companies you pay (subscriptions, renewals, invoices) |
-| **Partner Map** | Companies with affiliate/reseller programs you can join |
-| **Prospect Map** | Companies you could sell to (marketing gaps, relevant industry) |
+| **Spend Map** | Companies you pay — sub-segments: active_subscription, upcoming_renewal, churned_vendor |
+| **Partner Map** | Companies with affiliate/reseller programs — sub-segments: referral_program, general |
+| **Prospect Map** | Companies you could sell to — sub-segments: hot_lead, warm_prospect, intelligence_value |
 | **Dormant Threads** | Stalled conversations with commercial potential |
-| **Distribution Map** | Newsletters, podcasts, events that could amplify you |
-| **Procurement Map** | Active buying signals, vendor evaluations, RFPs |
+| **Distribution Map** | Newsletters, podcasts, events — sub-segments: newsletter, event_organizer, community |
+| **Procurement Map** | Active buying signals — sub-segments: security_compliance, formal_rfp, evaluation |
 
 Custom segments can be defined in `segments.yaml`:
 
@@ -393,6 +418,24 @@ Every gem is scored 0-100 based on a configurable formula:
 - Renewal leverage bonus (+3) — time-sensitive negotiation window
 
 All weights are configurable in `config.yaml` under `scoring.weights`.
+
+## Strategy-specific engagement
+
+Stage 7 uses 7 distinct strategy prompts tailored to each gem type, rather than a single generic prompt:
+
+| Strategy | Gem Types | Approach |
+|----------|-----------|----------|
+| `audit` | weak_marketing_lead, vendor_upsell | "I Audited Your Funnel" — consultative outreach with specific observations |
+| `revival` | dormant_warm_thread, unanswered_ask | Thread revival with context-aware follow-up referencing the original conversation |
+| `partner` | partner_program | Partner program application/inquiry with mutual value proposition |
+| `renewal_negotiation` | renewal_leverage | Data-driven renewal negotiation citing market alternatives |
+| `industry_report` | industry_intel | Content-led engagement invitation using shared industry data |
+| `mirror` | co_marketing | Mirror-match style — match the sender's sophistication and tone |
+| `distribution_pitch` | distribution_channel | Pitch to get featured in their newsletter/podcast/event |
+
+Each strategy assembles context-specific variables (thread history for revival, renewal dates for negotiation, partner URLs for partner applications) and enforces the configured tone and audience.
+
+The `preferred_strategies` config option filters which strategies are generated. The `max_outreach_per_day` config enforces a daily draft limit. Both filters are bypassed when generating for a specific `--gem` ID.
 
 ## ESP fingerprinting
 
@@ -441,7 +484,7 @@ gemail/
 │   │   ├── ollama.py           # Ollama HTTP client
 │   │   ├── anthropic_provider.py
 │   │   ├── crews.py            # CrewAI multi-agent orchestration
-│   │   └── prompts.py          # classification + engagement prompts
+│   │   └── prompts.py          # classification + 7 strategy engagement prompts
 │   └── web/                    # Web admin (optional: pip install -e ".[web]")
 │       ├── app.py              # FastAPI app factory
 │       ├── db.py               # SQLAlchemy engine + session
@@ -472,6 +515,7 @@ gemail/
     ├── test_stage_entities.py
     ├── test_stage_classify.py
     ├── test_stage_profile.py
+    ├── test_stage_engage.py
     └── test_cli.py
 ```
 
@@ -500,8 +544,12 @@ The test suite uses in-memory SQLite databases and mocks external services (Gmai
 - **No ORM for the CLI** — raw SQL with `sqlite3.Row` for dict-like access. Models in `models.py` are for type safety only. The web admin uses SQLAlchemy ORM models against the same database.
 - **CLI + Web coexistence** — the CLI uses raw `sqlite3` connections, the web admin uses SQLAlchemy. Both operate on the same database independently. The web layer calls the same stage functions the CLI uses.
 - **Pluggable AI** — `AIProvider` protocol with `ollama` and `anthropic` implementations. Model spec format: `provider:model_name`.
-- **AI audit trail** — when pipeline stages run from the web admin, a `LoggingAIProvider` wrapper records every AI call (prompt, response, model, duration) to the `ai_audit_log` table for full transparency.
+- **AI audit trail** — when pipeline stages run from the web admin, a `LoggingAIProvider` wrapper records every AI call (prompt, response, model, duration) to the `ai_audit_log` table for full transparency. Strategy-specific prompts are logged with their strategy name (e.g., `STRATEGY_audit`).
 - **Gem detection is rule-based** — deterministic logic, not AI. Every gem explains itself with structured signals and evidence. Reproducible and auditable.
+- **Warm signal detection** — dormant thread gems use entity cross-referencing (money signals, decision-makers) and regex-based warm signal scanning (pricing questions, meeting requests, follow-ups) to avoid surfacing low-value threads.
+- **Deterministic sophistication scoring** — a 10-point formula based on ESP tier, personalization, UTM tracking, template quality, authentication (SPF/DKIM/DMARC), and unsubscribe presence. Blended 60/40 with AI-provided scores.
+- **Classification feedback loop** — `--retrain` appends the last 10 classification overrides as few-shot correction examples to the prompt, improving accuracy over time without model fine-tuning.
+- **Content-aware thread tracking** — thread response detection uses question/concluded signal patterns (not just sent/received heuristics) to accurately determine who owes a reply.
 
 ## CrewAI multi-agent mode
 

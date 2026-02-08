@@ -3,6 +3,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
+from gemsieve.gmail.sync import _classify_awaiting_response
 from tests.conftest import insert_message
 
 
@@ -56,3 +57,43 @@ def test_multiple_messages_same_thread(db, sample_message):
         (sample_message["thread_id"],),
     ).fetchone()["cnt"]
     assert count == 2
+
+
+# --- Content-aware response detection tests ---
+
+def test_classify_awaiting_question_from_other():
+    """Other person asks a question -> user should respond."""
+    body = "Hi, could you share your pricing details?\nLet me know when you're free."
+    assert _classify_awaiting_response(body, is_from_user=False) == "user"
+
+
+def test_classify_awaiting_question_from_user():
+    """User asks a question -> awaiting response from other."""
+    body = "I reviewed the details. What do you think about our proposal?"
+    assert _classify_awaiting_response(body, is_from_user=True) == "other"
+
+
+def test_classify_awaiting_concluded_thread():
+    """Thread is concluded with thanks -> no one awaiting."""
+    body = "Great meeting today.\n\nSounds good, thanks for everything!"
+    assert _classify_awaiting_response(body, is_from_user=False) == "none"
+
+
+def test_classify_awaiting_informational_from_other():
+    """Other sends informational message (no question) -> no one awaiting."""
+    body = "Here is the report you requested. The quarterly numbers look good."
+    assert _classify_awaiting_response(body, is_from_user=False) == "none"
+
+
+def test_classify_awaiting_informational_from_user():
+    """User sends informational message (no question) -> no one awaiting."""
+    body = "I've attached the document. Let me know if you need anything else."
+    # "let me know" is a question signal, so this should be 'other'
+    assert _classify_awaiting_response(body, is_from_user=True) == "other"
+
+
+def test_classify_awaiting_empty_body():
+    """Empty body falls back to simple sent/received logic."""
+    assert _classify_awaiting_response(None, is_from_user=False) == "user"
+    assert _classify_awaiting_response(None, is_from_user=True) == "other"
+    assert _classify_awaiting_response("", is_from_user=False) == "user"

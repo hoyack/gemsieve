@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from gemsieve.ai.prompts import ENGAGEMENT_PROMPT
+from gemsieve.ai.prompts import DEFAULT_ENGAGEMENT_PROMPT, STRATEGY_PROMPTS
 from gemsieve.config import EngagementConfig
 from gemsieve.models import GemType
 
@@ -32,6 +32,102 @@ STRATEGY_CHANNELS = {
     "mirror": "email reply with value exchange",
     "distribution_pitch": "pitch email to editor/host",
 }
+
+
+def _build_strategy_context(
+    strategy: str,
+    gem: dict,
+    profile: dict,
+    engagement_config: EngagementConfig,
+) -> dict:
+    """Assemble strategy-specific context variables for prompt formatting.
+
+    Returns a dict ready to be passed to prompt.format(**context).
+    """
+    explanation = {}
+    try:
+        explanation = json.loads(gem["explanation"]) if gem["explanation"] else {}
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Parse contacts for the most relevant one
+    contacts = []
+    try:
+        contacts = json.loads(profile["known_contacts"]) if profile["known_contacts"] else []
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    contact_name = contacts[0]["name"] if contacts else ""
+    contact_role = contacts[0].get("role", "") if contacts else ""
+
+    # Base context shared by all strategies
+    context = {
+        "strategy_name": strategy,
+        "gem_type": gem["gem_type"],
+        "gem_explanation_json": json.dumps(explanation, indent=2),
+        "company_name": profile["company_name"] or profile["sender_domain"],
+        "contact_name": contact_name,
+        "contact_role": contact_role,
+        "industry": profile["industry"] or "Unknown",
+        "company_size": profile["company_size"] or "Unknown",
+        "esp_used": profile["esp_used"] or "Unknown",
+        "sophistication": profile["marketing_sophistication_avg"] or 0,
+        "product_description": profile["product_description"] or "Unknown",
+        "pain_points": json.dumps(
+            json.loads(profile["pain_points"]) if profile["pain_points"] else []
+        ),
+        "observation": explanation.get("summary", ""),
+        "relationship_summary": f"{profile['total_messages']} messages over time",
+        "user_service_description": engagement_config.your_service or "consulting services",
+        "user_preferred_tone": engagement_config.your_tone or "professional",
+        "user_audience": getattr(engagement_config, "your_audience", "") or "",
+    }
+
+    # Strategy-specific context additions
+    if strategy == "revival":
+        # Thread context for revival
+        thread_subject = ""
+        dormancy_days = 0
+        if gem.get("thread_id"):
+            # Will be filled from explanation signals
+            signals = explanation.get("signals", [])
+            for sig in signals:
+                if sig.get("signal") == "dormancy":
+                    try:
+                        dormancy_days = int(sig.get("evidence", "0").split()[0])
+                    except (ValueError, IndexError):
+                        pass
+        context["thread_subject"] = explanation.get("summary", "").split("'")[1] if "'" in explanation.get("summary", "") else ""
+        context["dormancy_days"] = dormancy_days or explanation.get("summary", "").split("dormant for ")[-1].split(" days")[0] if "dormant for" in explanation.get("summary", "") else "unknown"
+
+    elif strategy == "renewal_negotiation":
+        # Renewal dates and monetary signals
+        renewal_dates = []
+        monetary_signals = []
+        try:
+            renewal_dates = json.loads(profile["renewal_dates"]) if profile["renewal_dates"] else []
+        except (json.JSONDecodeError, TypeError):
+            pass
+        try:
+            monetary_signals = json.loads(profile["monetary_signals"]) if profile["monetary_signals"] else []
+        except (json.JSONDecodeError, TypeError):
+            pass
+        context["renewal_dates"] = json.dumps(renewal_dates)
+        context["monetary_signals"] = json.dumps(monetary_signals)
+
+    elif strategy == "partner":
+        # Partner URLs
+        partner_urls = []
+        try:
+            partner_urls = json.loads(profile["partner_program_urls"]) if profile["partner_program_urls"] else []
+        except (json.JSONDecodeError, TypeError):
+            pass
+        context["partner_urls"] = json.dumps(partner_urls)
+
+    elif strategy == "distribution_pitch":
+        context["target_audience"] = profile["target_audience"] or ""
+
+    return context
 
 
 def generate_engagement(
@@ -83,9 +179,26 @@ def generate_engagement(
         params.append(top_n)
 
     gems = db.execute(query, params).fetchall()
+
+    # Filter by preferred_strategies (Spec §15)
+    preferred = getattr(engagement_config, "preferred_strategies", None)
+    if preferred and gem_id is None:
+        gems = [
+            g for g in gems
+            if GEM_STRATEGY_MAP.get(g["gem_type"], "audit") in preferred
+        ]
+
     generated = 0
 
     for gem in gems:
+        # Daily limit enforcement (Spec §15)
+        max_per_day = getattr(engagement_config, "max_outreach_per_day", 20)
+        today_count = db.execute(
+            "SELECT COUNT(*) as cnt FROM engagement_drafts WHERE date(generated_at) = date('now')"
+        ).fetchone()
+        if today_count and today_count["cnt"] >= max_per_day:
+            break
+
         # Get sender profile
         profile = db.execute(
             "SELECT * FROM sender_profiles WHERE sender_domain = ?",
@@ -99,54 +212,23 @@ def generate_engagement(
         strat = GEM_STRATEGY_MAP.get(gem_type, "audit")
         channel = STRATEGY_CHANNELS.get(strat, "email")
 
-        # Parse contacts for the most relevant one
-        contacts = []
-        try:
-            contacts = json.loads(profile["known_contacts"]) if profile["known_contacts"] else []
-        except (json.JSONDecodeError, TypeError):
-            pass
+        # Build strategy context
+        context = _build_strategy_context(strat, dict(gem), dict(profile), engagement_config)
 
-        contact_name = contacts[0]["name"] if contacts else ""
-        contact_role = contacts[0].get("role", "") if contacts else ""
-
-        explanation = {}
-        try:
-            explanation = json.loads(gem["explanation"]) if gem["explanation"] else {}
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-        engagement_data = {
-            "strategy_name": strat,
-            "gem_type": gem_type,
-            "gem_explanation_json": json.dumps(explanation, indent=2),
-            "company_name": profile["company_name"] or profile["sender_domain"],
-            "contact_name": contact_name,
-            "contact_role": contact_role,
-            "industry": profile["industry"] or "Unknown",
-            "company_size": profile["company_size"] or "Unknown",
-            "esp_used": profile["esp_used"] or "Unknown",
-            "sophistication": profile["marketing_sophistication_avg"] or 0,
-            "product_description": profile["product_description"] or "Unknown",
-            "pain_points": json.dumps(
-                json.loads(profile["pain_points"]) if profile["pain_points"] else []
-            ),
-            "observation": explanation.get("summary", ""),
-            "relationship_summary": f"{profile['total_messages']} messages over time",
-            "user_service_description": engagement_config.your_service or "consulting services",
-            "user_preferred_tone": engagement_config.your_tone or "professional",
-        }
+        # Select strategy prompt or fallback to default
+        prompt_template = STRATEGY_PROMPTS.get(strat, DEFAULT_ENGAGEMENT_PROMPT)
 
         try:
             if use_crew:
                 from gemsieve.ai.crews import crew_engage
-                result = crew_engage(engagement_data, model_spec=model_spec, ai_config=ai_config)
+                result = crew_engage(context, model_spec=model_spec, ai_config=ai_config)
                 subject_line = result.get("subject_line", "")
                 body_text = result.get("body", result.get("body_text", ""))
             else:
                 from gemsieve.ai import get_provider
 
                 provider, model_name = get_provider(model_spec, config=ai_config)
-                prompt = ENGAGEMENT_PROMPT.format(**engagement_data)
+                prompt = prompt_template.format(**context)
                 result = provider.complete(
                     prompt=prompt,
                     model=model_name,

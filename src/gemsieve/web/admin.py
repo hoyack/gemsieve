@@ -65,10 +65,13 @@ class ParsedMetadataView(ModelView):
     fields = [
         "message_id", "sender_domain", "esp_identified", "esp_confidence",
         "spf_result", "dmarc_result", "dkim_domain", "sending_ip",
-        "is_bulk", "envelope_sender", "list_unsubscribe_url", "parsed_at",
+        "is_bulk", "envelope_sender", "list_unsubscribe_url",
+        "x_mailer", "mail_server", "precedence", "feedback_id",
+        "parsed_at",
     ]
     exclude_fields_from_list = [
         "envelope_sender", "list_unsubscribe_url", "parsed_at", "dkim_domain",
+        "x_mailer", "mail_server", "precedence", "feedback_id",
     ]
     searchable_fields = ["sender_domain", "esp_identified"]
     sortable_fields = ["sender_domain", "esp_identified", "esp_confidence"]

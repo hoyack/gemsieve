@@ -74,6 +74,10 @@ CREATE TABLE IF NOT EXISTS parsed_metadata (
     list_unsubscribe_url TEXT,
     list_unsubscribe_email TEXT,
     is_bulk BOOLEAN,
+    x_mailer TEXT,
+    mail_server TEXT,
+    precedence TEXT,
+    feedback_id TEXT,
     parsed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

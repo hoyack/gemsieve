@@ -28,7 +28,7 @@ def db_callback(
 ):
     """Database management."""
     from gemsieve.config import load_config
-    from gemsieve.database import db_stats, get_db, init_db, reset_db
+    from gemsieve.database import db_stats, get_db, init_db, migrate_db, reset_db
 
     config = load_config()
 
@@ -52,7 +52,13 @@ def db_callback(
     if migrate:
         conn = get_db(config)
         init_db(conn)
-        typer.echo("Schema migrations applied.")
+        actions = migrate_db(conn)
+        if actions:
+            for action in actions:
+                typer.echo(f"  {action}")
+            typer.echo(f"Schema migrations applied: {len(actions)} change(s).")
+        else:
+            typer.echo("Schema is up to date. No migrations needed.")
         conn.close()
         return
 
@@ -133,7 +139,8 @@ def parse(
 
     elif stage == "entities":
         from gemsieve.stages.entities import extract_entities
-        count = extract_entities(conn, spacy_model=config.entity_extraction.spacy_model)
+        count = extract_entities(conn, spacy_model=config.entity_extraction.spacy_model,
+                                 entity_config=config.entity_extraction)
         typer.echo(f"Entity extraction complete: {count} messages processed.")
 
     else:
@@ -161,6 +168,7 @@ def classify(
     model: Optional[str] = typer.Option(None, "--model", "-m", help="AI model spec (provider:model). Default: from config/env."),
     batch_size: int = typer.Option(10, "--batch-size", "-b", help="Messages per batch."),
     crew: bool = typer.Option(False, "--crew", help="Use CrewAI multi-agent mode."),
+    retrain: bool = typer.Option(False, "--retrain", help="Append few-shot correction examples from overrides."),
 ):
     """Run AI classification (Stage 4)."""
     from gemsieve.config import load_config
@@ -173,11 +181,14 @@ def classify(
 
     model_spec = _resolve_model(model, config)
     mode = "CrewAI" if crew else "direct"
+    if retrain:
+        mode += " + retrain"
     typer.echo(f"Classifying with model: {model_spec} ({mode} mode)")
     count = classify_messages(conn, model_spec=model_spec, batch_size=batch_size,
                               max_body_chars=config.ai.max_body_chars,
                               ai_config=config.ai.to_provider_dict(),
-                              use_crew=crew)
+                              use_crew=crew,
+                              retrain=retrain)
     typer.echo(f"Classification complete: {count} messages classified.")
     conn.close()
 
@@ -313,7 +324,7 @@ def gems(
 
     # If no flags, detect gems first
     if not list_all and gem_type is None and segment is None and top is None:
-        count = detect_gems(conn)
+        count = detect_gems(conn, engagement_config=config.engagement, scoring_config=config.scoring)
         typer.echo(f"Gem detection complete: {count} gems detected.")
         conn.close()
         return
@@ -574,7 +585,8 @@ def run(
     # Stage 3: Entities
     typer.echo("Stage 3: Extracting entities...")
     from gemsieve.stages.entities import extract_entities
-    count = extract_entities(conn, spacy_model=config.entity_extraction.spacy_model)
+    count = extract_entities(conn, spacy_model=config.entity_extraction.spacy_model,
+                             entity_config=config.entity_extraction)
     typer.echo(f"  Processed {count} messages.")
 
     # Stage 4: Classification
@@ -592,7 +604,7 @@ def run(
     from gemsieve.stages.profile import build_profiles, detect_gems
     count = build_profiles(conn)
     typer.echo(f"  Built {count} profiles.")
-    count = detect_gems(conn)
+    count = detect_gems(conn, engagement_config=config.engagement, scoring_config=config.scoring)
     typer.echo(f"  Detected {count} gems.")
 
     # Stage 6: Scoring
