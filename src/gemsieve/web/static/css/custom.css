@@ -1,0 +1,87 @@
+/* GemSieve Admin — Custom Styles */
+
+/* Stats cards */
+.gs-stat-number {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.gs-card {
+  border: 1px solid rgba(0,0,0,0.08);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  border-radius: 8px;
+}
+
+.gs-card .card-header {
+  background: transparent;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+
+/* Pipeline stage badges */
+.gs-pipeline-stage {
+  padding: 8px 16px;
+  border-radius: 6px;
+  text-align: center;
+  min-width: 90px;
+}
+
+.gs-stage-ok {
+  background: #d4edda;
+  border: 1px solid #c3e6cb;
+  color: #155724;
+}
+
+.gs-stage-empty {
+  background: #fff3cd;
+  border: 1px solid #ffeeba;
+  color: #856404;
+}
+
+/* Gem cards */
+.gs-gem-card {
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.gs-gem-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.gs-gem-type-badge {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-size: 0.75rem;
+}
+
+/* Code blocks */
+.gs-code-block {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+/* Live output terminal */
+.gs-live-output {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  border-radius: 0 0 8px 8px;
+}
+
+/* Score bar colors */
+.progress-bar.bg-success { background: #28a745 !important; }
+.progress-bar.bg-warning { background: #ffc107 !important; }
+
+/* Better badge spacing */
+.badge { font-weight: 500; }
+
+/* Card grid consistency */
+.card-footer {
+  background: transparent;
+  border-top: 1px solid rgba(0,0,0,0.06);
+}

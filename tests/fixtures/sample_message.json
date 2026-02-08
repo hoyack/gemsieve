@@ -1,0 +1,33 @@
+{
+  "id": "msg_fixture_001",
+  "threadId": "thread_fixture_001",
+  "labelIds": ["INBOX"],
+  "snippet": "Quick question about your API pricing",
+  "sizeEstimate": 5000,
+  "payload": {
+    "mimeType": "multipart/alternative",
+    "headers": [
+      {"name": "From", "value": "Sarah Chen <sarah@acme.com>"},
+      {"name": "To", "value": "brandon@example.com"},
+      {"name": "Subject", "value": "Quick question about your API pricing"},
+      {"name": "Date", "value": "Mon, 15 Jan 2024 10:30:00 +0000"},
+      {"name": "Return-Path", "value": "<sarah@acme.com>"},
+      {"name": "DKIM-Signature", "value": "v=1; d=acme.com; s=selector;"},
+      {"name": "Authentication-Results", "value": "mx.google.com; spf=pass; dmarc=pass"}
+    ],
+    "parts": [
+      {
+        "mimeType": "text/plain",
+        "body": {
+          "data": "SGkgQnJhbmRvbiwKCldlJ3JlIGV2YWx1YXRpbmcgc29sdXRpb25zIGZvciBvdXIgdGVhbSBvZiAzMCBlbmdpbmVlcnMuCkNvdWxkIHlvdSBzaGFyZSB5b3VyIEFQSSBwcmljaW5nIHRpZXJzPwoKQmVzdCByZWdhcmRzLApTYXJhaCBDaGVuClZQIEVuZ2luZWVyaW5nLCBBY21lIENvcnA="
+        }
+      },
+      {
+        "mimeType": "text/html",
+        "body": {
+          "data": "PGh0bWw-PGJvZHk-PGgxPkFQSSBQcmljaW5nIFF1ZXN0aW9uPC9oMT48cD5IaSBCcmFuZG9uLDwvcD48cD5XZSdyZSBldmFsdWF0aW5nIHNvbHV0aW9ucyBmb3Igb3VyIHRlYW0gb2YgMzAgZW5naW5lZXJzLjwvcD48L2JvZHk-PC9odG1sPg=="
+        }
+      }
+    ]
+  }
+}

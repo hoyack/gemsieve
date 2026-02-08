@@ -1,0 +1,167 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/custom/css/custom.css">
+
+<div class="container-fluid px-4 py-3">
+  <h2 class="mb-4">AI Inspector</h2>
+
+  <!-- Filters -->
+  <div class="card gs-card mb-4">
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-auto">
+          <label class="form-label small">Stage</label>
+          <select name="stage" class="form-select form-select-sm">
+            <option value="">All stages</option>
+            {% for s in stages %}
+            <option value="{{ s }}" {% if stage_filter == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label small">Domain</label>
+          <input type="text" name="domain" class="form-control form-control-sm"
+                 value="{{ domain_filter }}" placeholder="sender domain...">
+        </div>
+        <div class="col-auto">
+          <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+          <a href="?" class="btn btn-sm btn-outline-secondary">Reset</a>
+        </div>
+        <div class="col-auto ms-auto">
+          <span class="text-muted small">{{ total }} entries | Page {{ page }}/{{ pages }}</span>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Prompt Library -->
+  <div class="card gs-card mb-4">
+    <div class="card-header">
+      <a data-bs-toggle="collapse" href="#promptLibrary" class="text-decoration-none">
+        <strong><i class="fa fa-book"></i> Prompt Library</strong>
+        <small class="text-muted">(click to expand)</small>
+      </a>
+    </div>
+    <div class="collapse" id="promptLibrary">
+      <div class="card-body">
+        <h6>CLASSIFICATION_PROMPT</h6>
+        <pre class="gs-code-block small">You are analyzing an email to build an intelligence profile on the sender.
+
+SENDER: {from_name} &lt;{from_address}&gt;
+SUBJECT: {subject}
+ESP: {esp_identified}
+INTENT SIGNALS: {offer_types}, CTAs: {cta_texts}
+ENTITIES FOUND: {extracted_entities_summary}
+BODY (first 2000 chars):
+{body_clean}
+
+Variables: from_name, from_address, subject, esp_identified, offer_types, cta_texts, extracted_entities_summary, body_clean</pre>
+        <hr>
+        <h6>ENGAGEMENT_PROMPT</h6>
+        <pre class="gs-code-block small">You are generating a personalized engagement message.
+
+STRATEGY: {strategy_name}
+GEM TYPE: {gem_type}
+GEM EXPLANATION: {gem_explanation_json}
+RECIPIENT PROFILE: company, contact, industry, size, ESP, sophistication...
+
+Variables: strategy_name, gem_type, gem_explanation_json, company_name, contact_name, contact_role, industry, company_size, esp_used, sophistication, product_description, pain_points, observation, relationship_summary, user_service_description, user_preferred_tone</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audit Log Entries -->
+  {% if entries %}
+  <div class="row g-3">
+    {% for entry in entries %}
+    <div class="col-12">
+      <div class="card gs-card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div>
+            <span class="badge bg-primary">{{ entry.stage }}</span>
+            <span class="badge bg-secondary">{{ entry.model_used or 'unknown' }}</span>
+            {% if entry.sender_domain %}
+            <span class="badge bg-info">{{ entry.sender_domain }}</span>
+            {% endif %}
+            <span class="text-muted small ms-2">#{{ entry.id }} | Run #{{ entry.pipeline_run_id or '-' }}</span>
+          </div>
+          <div>
+            {% if entry.duration_ms %}
+            <span class="badge bg-dark">{{ entry.duration_ms }}ms</span>
+            {% endif %}
+            <span class="text-muted small">{{ entry.created_at or '' }}</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <!-- Collapsible sections -->
+          <div class="mb-3">
+            <a data-bs-toggle="collapse" href="#prompt-{{ entry.id }}" class="fw-bold text-decoration-none">
+              <i class="fa fa-chevron-right"></i> Rendered Prompt
+            </a>
+            <span class="badge bg-light text-dark small ms-2">{{ entry.prompt_template or '' }}</span>
+            <div class="collapse" id="prompt-{{ entry.id }}">
+              <pre class="gs-code-block small mt-2">{{ entry.prompt_rendered or 'N/A' }}</pre>
+            </div>
+          </div>
+
+          {% if entry.system_prompt %}
+          <div class="mb-3">
+            <a data-bs-toggle="collapse" href="#sys-{{ entry.id }}" class="fw-bold text-decoration-none">
+              <i class="fa fa-chevron-right"></i> System Prompt
+            </a>
+            <div class="collapse" id="sys-{{ entry.id }}">
+              <pre class="gs-code-block small mt-2">{{ entry.system_prompt }}</pre>
+            </div>
+          </div>
+          {% endif %}
+
+          <div class="mb-3">
+            <a data-bs-toggle="collapse" href="#resp-{{ entry.id }}" class="fw-bold text-decoration-none">
+              <i class="fa fa-chevron-right"></i> Raw Response
+            </a>
+            <div class="collapse" id="resp-{{ entry.id }}">
+              <pre class="gs-code-block small mt-2">{{ entry.response_raw or 'N/A' }}</pre>
+            </div>
+          </div>
+
+          {% if entry.response_parsed and entry.response_parsed != entry.response_raw %}
+          <div class="mb-3">
+            <a data-bs-toggle="collapse" href="#parsed-{{ entry.id }}" class="fw-bold text-decoration-none">
+              <i class="fa fa-chevron-right"></i> Parsed Response
+            </a>
+            <div class="collapse" id="parsed-{{ entry.id }}">
+              <pre class="gs-code-block small mt-2">{{ entry.response_parsed }}</pre>
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Pagination -->
+  {% if pages > 1 %}
+  <nav class="mt-4">
+    <ul class="pagination justify-content-center">
+      {% for p in range(1, pages + 1) %}
+      <li class="page-item {% if p == page %}active{% endif %}">
+        <a class="page-link" href="?page={{ p }}&stage={{ stage_filter }}&domain={{ domain_filter }}">{{ p }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </nav>
+  {% endif %}
+
+  {% else %}
+  <div class="card gs-card">
+    <div class="card-body text-center text-muted py-5">
+      <i class="fa fa-microscope fa-3x mb-3"></i>
+      <h5>No AI audit entries yet</h5>
+      <p>Run the classify or engage pipeline stages from the Pipeline Control page to see AI call data here.</p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

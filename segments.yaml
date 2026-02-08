@@ -1,0 +1,26 @@
+custom_segments:
+  - name: "AI-ready small businesses"
+    rules:
+      company_size: "small"
+      industry: ["SaaS", "Agency", "Marketing"]
+      marketing_sophistication_avg: {"lt": 5}
+    priority: "hot"
+
+  - name: "E-commerce with weak email game"
+    rules:
+      industry: "E-commerce"
+      has_personalization: false
+      esp_used: ["Mailchimp", "constant_contact"]
+    priority: "warm"
+
+  - name: "Partner revenue targets"
+    rules:
+      has_partner_program: true
+      industry: ["SaaS", "Developer Tools", "Marketing"]
+    priority: "hot"
+
+  - name: "Renewal negotiation windows"
+    rules:
+      segment_includes: "spend_map"
+      renewal_date_within_days: 60
+    priority: "hot"

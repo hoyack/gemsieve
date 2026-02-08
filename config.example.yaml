@@ -1,0 +1,63 @@
+# GemSieve Configuration
+# Copy to config.yaml and customize
+
+gmail:
+  credentials_file: "credentials.json"
+  token_file: "token.json"
+  default_query: "newer_than:1y"
+
+storage:
+  backend: "sqlite"
+  sqlite_path: "gemsieve.db"
+
+ai:
+  provider: "ollama"
+  model: "mistral-nemo"
+  ollama_base_url: "http://localhost:11434"
+  batch_size: 10
+  max_body_chars: 2000
+
+entity_extraction:
+  backend: "spacy"
+  spacy_model: "en_core_web_trf"  # or en_core_web_sm for speed
+  extract_monetary: true
+  extract_dates: true
+  extract_procurement: true
+
+scoring:
+  target_industries:
+    - "SaaS"
+    - "Agency"
+    - "E-commerce"
+    - "Marketing"
+    - "Developer Tools"
+  weights:
+    reachability: 15
+    budget_signal: 10
+    relevance: 10
+    recency: 10
+    known_contacts: 10
+    monetary_signals: 5
+    gem_diversity: 24
+    dormant_thread_bonus: 8
+    partner_bonus: 5
+    renewal_bonus: 3
+  dormant_thread:
+    min_dormancy_days: 14
+    max_dormancy_days: 365
+    require_human_sender: true
+
+engagement:
+  your_name: "Brandon"
+  your_service: "AI-powered marketing automation and workflow systems"
+  your_tone: "direct, technical, peer-to-peer"
+  your_audience: "SaaS companies and agencies looking to automate with AI"
+  preferred_strategies:
+    - "audit"
+    - "mirror"
+    - "revival"
+    - "partner"
+  max_outreach_per_day: 20
+
+esp_fingerprints_file: "esp_rules.yaml"
+custom_segments_file: "segments.yaml"

@@ -1,0 +1,81 @@
+sendgrid:
+  signals:
+    - return_path_contains: "sendgrid.net"
+    - dkim_domain: "sendgrid.net"
+    - header_present: "X-SG-EID"
+  confidence: high
+
+mailchimp:
+  signals:
+    - return_path_contains: "mcsv.net"
+    - dkim_domain: "mcsv.net"
+    - x_mailer_contains: "Mailchimp"
+    - tracking_domain: "list-manage.com"
+  confidence: high
+
+hubspot:
+  signals:
+    - return_path_contains: "hubspot.com"
+    - tracking_domain: "track.hubspot.com"
+    - header_present: "X-HS-CampaignId"
+  confidence: high
+
+klaviyo:
+  signals:
+    - return_path_contains: "klaviyo.com"
+    - dkim_domain: "klaviyo.com"
+    - tracking_domain: "trk.klaviyo.com"
+  confidence: high
+
+constant_contact:
+  signals:
+    - return_path_contains: "constantcontact.com"
+    - x_mailer_contains: "Roving Constant Contact"
+  confidence: high
+
+amazon_ses:
+  signals:
+    - return_path_contains: "amazonses.com"
+    - dkim_domain: "amazonses.com"
+  confidence: medium
+
+convertkit:
+  signals:
+    - return_path_contains: "convertkit.com"
+    - dkim_domain: "convertkit.com"
+    - tracking_domain: "convertkit.com"
+  confidence: high
+
+activecampaign:
+  signals:
+    - return_path_contains: "acems1.com"
+    - dkim_domain: "acems1.com"
+    - tracking_domain: "lt.acemlna.com"
+  confidence: high
+
+salesforce_mc:
+  signals:
+    - return_path_contains: "exacttarget.com"
+    - dkim_domain: "exacttarget.com"
+    - header_present: "x-sfdc-lk"
+  confidence: high
+
+postmark:
+  signals:
+    - return_path_contains: "postmarkapp.com"
+    - dkim_domain: "postmarkapp.com"
+    - header_present: "X-PM-Message-Id"
+  confidence: high
+
+mailgun:
+  signals:
+    - return_path_contains: "mailgun.org"
+    - dkim_domain: "mailgun.org"
+    - header_present: "X-Mailgun-Sid"
+  confidence: high
+
+custom_smtp:
+  signals:
+    - no_known_esp_match: true
+    - dkim_domain_matches_sender: true
+  confidence: low

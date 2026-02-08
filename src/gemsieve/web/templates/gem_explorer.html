@@ -1,0 +1,170 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/custom/css/custom.css">
+
+<div class="container-fluid px-4 py-3">
+  <h2 class="mb-4">Gem Explorer <span class="badge bg-success">{{ total }}</span></h2>
+
+  <!-- Filters -->
+  <div class="card gs-card mb-4">
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-auto">
+          <label class="form-label small">Type</label>
+          <select name="type" class="form-select form-select-sm">
+            <option value="">All types</option>
+            {% for t in gem_types %}
+            <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label small">Status</label>
+          <select name="status" class="form-select form-select-sm">
+            <option value="">All</option>
+            {% for s in gem_statuses %}
+            <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label small">Min Score</label>
+          <input type="number" name="min_score" class="form-control form-control-sm"
+                 value="{{ min_score }}" placeholder="0" style="width: 80px;">
+        </div>
+        <div class="col-auto">
+          <label class="form-label small">Sort</label>
+          <select name="sort" class="form-select form-select-sm">
+            <option value="score_desc" {% if sort_by == 'score_desc' %}selected{% endif %}>Score (high to low)</option>
+            <option value="score_asc" {% if sort_by == 'score_asc' %}selected{% endif %}>Score (low to high)</option>
+            <option value="newest" {% if sort_by == 'newest' %}selected{% endif %}>Newest first</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+          <a href="?" class="btn btn-sm btn-outline-secondary">Reset</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Gem Cards Grid -->
+  {% if gems %}
+  <div class="row g-3">
+    {% for gem in gems %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card gs-card gs-gem-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div>
+            <span class="badge gs-gem-type-badge">{{ gem.gem_type }}</span>
+            <span class="badge bg-{% if gem.status == 'new' %}info{% elif gem.status == 'acted' %}success{% else %}secondary{% endif %} ms-1">{{ gem.status }}</span>
+          </div>
+          <div class="fw-bold">#{{ gem.id }}</div>
+        </div>
+        <div class="card-body">
+          <!-- Sender info -->
+          <div class="mb-2">
+            <div class="fw-bold">{{ gem.company_name or gem.sender_domain }}</div>
+            <div class="text-muted small">{{ gem.sender_domain }}
+              {% if gem.industry %} &middot; {{ gem.industry }}{% endif %}
+            </div>
+          </div>
+
+          <!-- Score bar -->
+          <div class="mb-3">
+            <div class="d-flex justify-content-between small mb-1">
+              <span>Score</span>
+              <span class="fw-bold">{{ gem.score }}</span>
+            </div>
+            <div class="progress" style="height: 8px;">
+              <div class="progress-bar
+                {% if gem.score >= 70 %}bg-success{% elif gem.score >= 40 %}bg-warning{% else %}bg-secondary{% endif %}"
+                style="width: {{ gem.score }}%"></div>
+            </div>
+          </div>
+
+          <!-- Summary -->
+          {% if gem.summary %}
+          <div class="mb-2 small">{{ gem.summary }}</div>
+          {% endif %}
+
+          <!-- Signal chips -->
+          {% if gem.signals %}
+          <div class="mb-2">
+            {% for sig in gem.signals[:5] %}
+            <span class="badge bg-light text-dark border me-1 mb-1 small"
+                  title="{{ sig.evidence if sig is mapping else sig }}">
+              {{ sig.signal if sig is mapping else sig }}
+            </span>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          <!-- Actions -->
+          {% if gem.actions %}
+          <div class="mb-2 small">
+            <strong>Actions:</strong>
+            <ul class="mb-0 ps-3">
+              {% for a in gem.actions[:3] %}
+              <li>{{ a }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+        </div>
+        <div class="card-footer d-flex gap-2">
+          <button class="btn btn-sm btn-outline-success flex-fill"
+                  onclick="generateDraft({{ gem.id }})">
+            <i class="fa fa-paper-plane"></i> Generate Draft
+          </button>
+          <a href="/admin/gems/detail/{{ gem.id }}" class="btn btn-sm btn-outline-secondary">
+            <i class="fa fa-eye"></i> Detail
+          </a>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card gs-card">
+    <div class="card-body text-center text-muted py-5">
+      <i class="fa fa-gem fa-3x mb-3"></i>
+      <h5>No gems found</h5>
+      <p>Run the pipeline (stages 1-5) to detect gems from your inbox.</p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Generation toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index: 9999">
+  <div id="genToast" class="toast" role="alert" aria-atomic="true">
+    <div class="toast-header">
+      <strong class="me-auto" id="toastTitle">Generating...</strong>
+      <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+    </div>
+    <div class="toast-body" id="toastBody"></div>
+  </div>
+</div>
+
+<script>
+async function generateDraft(gemId) {
+  const toast = document.getElementById('genToast');
+  const bsToast = new bootstrap.Toast(toast, {autohide: true, delay: 5000});
+  document.getElementById('toastTitle').textContent = 'Submitting...';
+  document.getElementById('toastBody').textContent = `Generating engagement draft for gem #${gemId}`;
+  bsToast.show();
+
+  try {
+    const resp = await fetch(`/api/gems/${gemId}/generate`, { method: 'POST' });
+    const data = await resp.json();
+    document.getElementById('toastTitle').textContent = 'Submitted';
+    document.getElementById('toastBody').textContent = `Draft generation started (run #${data.run_id})`;
+  } catch(err) {
+    document.getElementById('toastTitle').textContent = 'Error';
+    document.getElementById('toastBody').textContent = err.toString();
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,239 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/custom/css/custom.css">
+
+<div class="container-fluid px-4 py-3">
+  <h2 class="mb-4">GemSieve Dashboard</h2>
+
+  <!-- Stats Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-2">
+      <div class="card gs-card text-center">
+        <div class="card-body">
+          <div class="gs-stat-number">{{ stats.messages }}</div>
+          <div class="text-muted small">Messages</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="card gs-card text-center">
+        <div class="card-body">
+          <div class="gs-stat-number">{{ stats.profiles }}</div>
+          <div class="text-muted small">Profiles</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="card gs-card text-center">
+        <div class="card-body">
+          <div class="gs-stat-number text-success">{{ stats.gems }}</div>
+          <div class="text-muted small">Gems</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="card gs-card text-center">
+        <div class="card-body">
+          <div class="gs-stat-number">{{ stats.classifications }}</div>
+          <div class="text-muted small">Classified</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="card gs-card text-center">
+        <div class="card-body">
+          <div class="gs-stat-number">{{ stats.drafts }}</div>
+          <div class="text-muted small">Drafts</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <div class="card gs-card text-center">
+        <div class="card-body">
+          <div class="gs-stat-number">{{ stats.pipeline_runs }}</div>
+          <div class="text-muted small">Pipeline Runs</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipeline Health -->
+  <div class="card gs-card mb-4">
+    <div class="card-header"><strong>Pipeline Health</strong></div>
+    <div class="card-body">
+      <div class="d-flex flex-wrap gap-2">
+        {% for stage, count in pipeline_health.items() %}
+        <div class="gs-pipeline-stage
+          {% if count > 0 %}gs-stage-ok{% else %}gs-stage-empty{% endif %}">
+          <div class="fw-bold">{{ stage }}</div>
+          <div class="small">{{ count }} rows</div>
+        </div>
+        <i class="fa fa-arrow-right text-muted align-self-center" {% if loop.last %}style="display:none"{% endif %}></i>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts Row -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card gs-card">
+        <div class="card-header"><strong>Gem Type Distribution</strong></div>
+        <div class="card-body">
+          <canvas id="gemTypeChart" height="250"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card gs-card">
+        <div class="card-header"><strong>Top Gems by Score</strong></div>
+        <div class="card-body">
+          <canvas id="topGemsChart" height="250"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card gs-card">
+        <div class="card-header"><strong>Industry Breakdown</strong></div>
+        <div class="card-body">
+          <canvas id="industryChart" height="250"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card gs-card">
+        <div class="card-header"><strong>Messages by ESP</strong></div>
+        <div class="card-body">
+          <canvas id="espChart" height="250"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Activity -->
+  <div class="card gs-card">
+    <div class="card-header"><strong>Recent Pipeline Activity</strong></div>
+    <div class="card-body p-0">
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th>ID</th><th>Stage</th><th>Status</th>
+            <th>Started</th><th>Completed</th><th>Items</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in recent_runs %}
+          <tr>
+            <td>{{ run.id }}</td>
+            <td><span class="badge bg-secondary">{{ run.stage }}</span></td>
+            <td>
+              {% if run.status == 'completed' %}
+                <span class="badge bg-success">completed</span>
+              {% elif run.status == 'running' %}
+                <span class="badge bg-primary">running</span>
+              {% elif run.status == 'failed' %}
+                <span class="badge bg-danger">failed</span>
+              {% else %}
+                <span class="badge bg-warning">{{ run.status }}</span>
+              {% endif %}
+            </td>
+            <td>{{ run.started_at or '-' }}</td>
+            <td>{{ run.completed_at or '-' }}</td>
+            <td>{{ run.items_processed or 0 }}</td>
+          </tr>
+          {% endfor %}
+          {% if not recent_runs %}
+          <tr><td colspan="6" class="text-muted text-center py-3">No pipeline runs yet</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+const COLORS = [
+  '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f',
+  '#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'
+];
+
+// Gem type chart
+fetch('/api/stats/gems-by-type')
+  .then(r => r.json())
+  .then(data => {
+    if (!data.length) return;
+    new Chart(document.getElementById('gemTypeChart'), {
+      type: 'doughnut',
+      data: {
+        labels: data.map(d => d.gem_type),
+        datasets: [{
+          data: data.map(d => d.count),
+          backgroundColor: COLORS,
+        }]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'right' } } }
+    });
+  });
+
+// Top gems chart
+fetch('/api/stats/gems-top/10')
+  .then(r => r.json())
+  .then(data => {
+    if (!data.length) return;
+    new Chart(document.getElementById('topGemsChart'), {
+      type: 'bar',
+      data: {
+        labels: data.map(d => d.sender_domain),
+        datasets: [{
+          label: 'Score',
+          data: data.map(d => d.score),
+          backgroundColor: '#4e79a7',
+        }]
+      },
+      options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } } }
+    });
+  });
+
+// Industry chart
+fetch('/api/stats/by-industry')
+  .then(r => r.json())
+  .then(data => {
+    if (!data.length) return;
+    new Chart(document.getElementById('industryChart'), {
+      type: 'pie',
+      data: {
+        labels: data.map(d => d.industry),
+        datasets: [{
+          data: data.map(d => d.count),
+          backgroundColor: COLORS,
+        }]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'right' } } }
+    });
+  });
+
+// ESP chart
+fetch('/api/stats/by-esp')
+  .then(r => r.json())
+  .then(data => {
+    if (!data.length) return;
+    new Chart(document.getElementById('espChart'), {
+      type: 'bar',
+      data: {
+        labels: data.map(d => d.esp),
+        datasets: [{
+          label: 'Messages',
+          data: data.map(d => d.count),
+          backgroundColor: '#59a14f',
+        }]
+      },
+      options: { responsive: true, plugins: { legend: { display: false } } }
+    });
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,224 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/custom/css/custom.css">
+
+<div class="container-fluid px-4 py-3">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Pipeline Control</h2>
+    <button class="btn btn-primary" onclick="runAll()" id="runAllBtn">
+      <i class="fa fa-play"></i> Run All (Stages 1-6)
+    </button>
+  </div>
+
+  <!-- Stage dependency flow -->
+  <div class="card gs-card mb-4">
+    <div class="card-header"><strong>Stage Flow</strong></div>
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        {% for stage in stages %}
+        <div class="gs-pipeline-stage
+          {% if stage.row_count > 0 %}gs-stage-ok{% else %}gs-stage-empty{% endif %}"
+          id="stage-badge-{{ stage.name }}">
+          <div class="fw-bold small">{{ loop.index }}. {{ stage.name }}</div>
+          <div class="small text-muted">{{ stage.row_count }} rows</div>
+        </div>
+        {% if not loop.last %}
+        <i class="fa fa-arrow-right text-muted"></i>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Stage Cards -->
+  <div class="row g-3 mb-4">
+    {% for stage in stages %}
+    <div class="col-md-4 col-lg-3">
+      <div class="card gs-card h-100" id="stage-card-{{ stage.name }}">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong>{{ stage.description }}</strong>
+        </div>
+        <div class="card-body">
+          <div class="mb-2">
+            <span class="text-muted">Output rows:</span>
+            <span class="fw-bold" id="stage-count-{{ stage.name }}">{{ stage.row_count }}</span>
+          </div>
+          {% if stage.last_run %}
+          <div class="mb-2">
+            <span class="text-muted">Last run:</span>
+            {% if stage.last_run.status == 'completed' %}
+              <span class="badge bg-success">completed</span>
+            {% elif stage.last_run.status == 'running' %}
+              <span class="badge bg-primary"><i class="fa fa-spinner fa-spin"></i> running</span>
+            {% elif stage.last_run.status == 'failed' %}
+              <span class="badge bg-danger" title="{{ stage.last_run.error_message }}">failed</span>
+            {% else %}
+              <span class="badge bg-warning">{{ stage.last_run.status }}</span>
+            {% endif %}
+            <span class="small text-muted">({{ stage.last_run.items_processed or 0 }} items)</span>
+          </div>
+          {% else %}
+          <div class="mb-2 text-muted small">Never run</div>
+          {% endif %}
+        </div>
+        <div class="card-footer">
+          <button class="btn btn-sm btn-outline-primary w-100 stage-run-btn"
+                  onclick="runStage('{{ stage.name }}')" id="btn-{{ stage.name }}">
+            <i class="fa fa-play"></i> Run {{ stage.name }}
+          </button>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Live Output -->
+  <div class="card gs-card mb-4" id="live-output-card" style="display:none">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong><i class="fa fa-broadcast-tower"></i> Live Output</strong>
+      <button class="btn btn-sm btn-outline-secondary" onclick="clearOutput()">Clear</button>
+    </div>
+    <div class="card-body p-0">
+      <div id="live-output" class="gs-live-output font-monospace small p-3"
+           style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4;">
+      </div>
+    </div>
+  </div>
+
+  <!-- Run History -->
+  <div class="card gs-card">
+    <div class="card-header"><strong>Run History</strong></div>
+    <div class="card-body p-0">
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th>ID</th><th>Stage</th><th>Status</th>
+            <th>Started</th><th>Completed</th><th>Items</th><th>Source</th><th>Error</th>
+          </tr>
+        </thead>
+        <tbody id="run-history-body">
+          {% for run in run_history %}
+          <tr>
+            <td>{{ run.id }}</td>
+            <td><span class="badge bg-secondary">{{ run.stage }}</span></td>
+            <td>
+              {% if run.status == 'completed' %}
+                <span class="badge bg-success">completed</span>
+              {% elif run.status == 'running' %}
+                <span class="badge bg-primary">running</span>
+              {% elif run.status == 'failed' %}
+                <span class="badge bg-danger">failed</span>
+              {% else %}
+                <span class="badge bg-warning">{{ run.status }}</span>
+              {% endif %}
+            </td>
+            <td>{{ run.started_at or '-' }}</td>
+            <td>{{ run.completed_at or '-' }}</td>
+            <td>{{ run.items_processed or 0 }}</td>
+            <td>{{ run.triggered_by or 'web' }}</td>
+            <td class="text-danger small">{{ run.error_message or '' }}</td>
+          </tr>
+          {% endfor %}
+          {% if not run_history %}
+          <tr><td colspan="8" class="text-muted text-center py-3">No pipeline runs yet</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+let eventSource = null;
+
+function connectSSE() {
+  if (eventSource) return;
+  eventSource = new EventSource('/api/pipeline/stream');
+  document.getElementById('live-output-card').style.display = '';
+
+  eventSource.addEventListener('stage_started', function(e) {
+    const data = JSON.parse(e.data);
+    appendOutput(`[STARTED] Stage: ${data.stage} (run #${data.run_id})`, 'text-info');
+    const btn = document.getElementById('btn-' + data.stage);
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Running...';
+    }
+  });
+
+  eventSource.addEventListener('stage_completed', function(e) {
+    const data = JSON.parse(e.data);
+    appendOutput(`[DONE] Stage: ${data.stage} - ${data.items_processed} items processed`, 'text-success');
+    const btn = document.getElementById('btn-' + data.stage);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fa fa-play"></i> Run ${data.stage}`;
+    }
+  });
+
+  eventSource.addEventListener('stage_failed', function(e) {
+    const data = JSON.parse(e.data);
+    appendOutput(`[FAILED] Stage: ${data.stage} - ${data.error}`, 'text-danger');
+    const btn = document.getElementById('btn-' + data.stage);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fa fa-play"></i> Run ${data.stage}`;
+    }
+  });
+
+  eventSource.onerror = function() {
+    appendOutput('[SSE] Connection lost, reconnecting...', 'text-warning');
+  };
+}
+
+function appendOutput(text, cssClass) {
+  const div = document.getElementById('live-output');
+  const line = document.createElement('div');
+  line.className = cssClass || '';
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+  div.appendChild(line);
+  div.scrollTop = div.scrollHeight;
+}
+
+function clearOutput() {
+  document.getElementById('live-output').innerHTML = '';
+}
+
+async function runStage(stage) {
+  connectSSE();
+  const btn = document.getElementById('btn-' + stage);
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Submitting...';
+  }
+  try {
+    const resp = await fetch(`/api/pipeline/run/${stage}`, { method: 'POST' });
+    const data = await resp.json();
+    appendOutput(`Submitted ${stage} -> run #${data.run_id}`, 'text-info');
+  } catch(err) {
+    appendOutput(`Error submitting ${stage}: ${err}`, 'text-danger');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fa fa-play"></i> Run ${stage}`;
+    }
+  }
+}
+
+async function runAll() {
+  connectSSE();
+  const btn = document.getElementById('runAllBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Running...';
+  try {
+    const resp = await fetch('/api/pipeline/run/all', { method: 'POST' });
+    const data = await resp.json();
+    appendOutput(`Submitted all stages -> runs: ${data.run_ids.join(', ')}`, 'text-info');
+  } catch(err) {
+    appendOutput(`Error: ${err}`, 'text-danger');
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fa fa-play"></i> Run All (Stages 1-6)';
+}
+</script>
+{% endblock %}
