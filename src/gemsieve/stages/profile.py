@@ -402,6 +402,8 @@ def detect_gems(
     Returns count of gems detected.
     """
     # Clear existing gems to re-detect (idempotent)
+    # Delete engagement drafts first to satisfy foreign key constraint
+    db.execute("DELETE FROM engagement_drafts WHERE gem_id IN (SELECT id FROM gems)")
     db.execute("DELETE FROM gems")
 
     profiles = db.execute("SELECT * FROM sender_profiles").fetchall()
@@ -411,20 +413,38 @@ def detect_gems(
     if scoring_config and hasattr(scoring_config, "dormant_thread"):
         dormant_config = scoring_config.dormant_thread
 
+    # Pre-compute bulk sender domains (>50% of messages are bulk)
+    bulk_rows = db.execute("""
+        SELECT sender_domain,
+               SUM(is_bulk) * 1.0 / COUNT(*) as bulk_ratio
+        FROM parsed_metadata
+        GROUP BY sender_domain
+        HAVING bulk_ratio > 0.5
+    """).fetchall()
+    bulk_sender_domains = {r["sender_domain"] for r in bulk_rows}
+
+    # Load excluded domains
+    excluded_rows = db.execute("SELECT domain FROM domain_exclusions").fetchall()
+    excluded_domains = {r["domain"] for r in excluded_rows}
+
     gem_count = 0
     for profile in profiles:
         domain = profile["sender_domain"]
+
+        # Skip excluded domains
+        if domain in excluded_domains:
+            continue
         gems = []
 
-        gems.extend(_detect_dormant_warm_thread(db, profile, dormant_config=dormant_config))
-        gems.extend(_detect_unanswered_ask(db, profile))
-        gems.extend(_detect_weak_marketing_lead(db, profile))
+        gems.extend(_detect_dormant_warm_thread(db, profile, dormant_config=dormant_config, bulk_sender_domains=bulk_sender_domains))
+        gems.extend(_detect_unanswered_ask(db, profile, bulk_sender_domains=bulk_sender_domains))
+        gems.extend(_detect_weak_marketing_lead(db, profile, bulk_sender_domains=bulk_sender_domains))
         gems.extend(_detect_partner_program(db, profile))
-        gems.extend(_detect_renewal_leverage(db, profile))
+        gems.extend(_detect_renewal_leverage(db, profile, bulk_sender_domains=bulk_sender_domains))
         gems.extend(_detect_distribution_channel(db, profile))
         gems.extend(_detect_co_marketing(db, profile, engagement_config=engagement_config))
         gems.extend(_detect_vendor_upsell(db, profile))
-        gems.extend(_detect_industry_intel(db, profile))
+        gems.extend(_detect_industry_intel(db, profile, bulk_sender_domains=bulk_sender_domains))
         gems.extend(_detect_procurement_signal(db, profile))
 
         for gem in gems:
@@ -547,10 +567,14 @@ def _scan_warm_signals(db: sqlite3.Connection, thread_id: str) -> tuple[list[dic
 
 # --- Gem Detection Functions ---
 
-def _detect_dormant_warm_thread(db: sqlite3.Connection, profile, dormant_config=None) -> list[dict]:
+def _detect_dormant_warm_thread(db: sqlite3.Connection, profile, dormant_config=None, bulk_sender_domains=None) -> list[dict]:
     """Detect dormant warm threads for this sender."""
     gems = []
     domain = profile["sender_domain"]
+
+    # Skip bulk sender domains
+    if bulk_sender_domains and domain in bulk_sender_domains:
+        return []
 
     min_dormancy = 14
     max_dormancy = 365
@@ -570,6 +594,8 @@ def _detect_dormant_warm_thread(db: sqlite3.Connection, profile, dormant_config=
              AND t.awaiting_response_from = 'user'
              AND t.days_dormant >= ?
              AND t.days_dormant <= ?
+             AND t.user_participated = 1
+             AND t.message_count >= 2
            GROUP BY t.thread_id""",
         (domain, min_dormancy, max_dormancy),
     ).fetchall()
@@ -582,8 +608,12 @@ def _detect_dormant_warm_thread(db: sqlite3.Connection, profile, dormant_config=
         # Scan for warm signals
         warm_signals, warm_boost = _scan_warm_signals(db, t["thread_id"])
 
-        # Skip threads with zero warm signals when require_human_sender=True
-        if require_human and not warm_signals:
+        # Require at least 2 distinct warm signal types
+        distinct_signal_types = {
+            s["signal"].split("_", 1)[-1] if s["signal"].startswith("warm_") else s["signal"]
+            for s in warm_signals
+        }
+        if require_human and len(distinct_signal_types) < 2:
             continue
 
         # Filter out transactional/re_engagement intents
@@ -645,10 +675,14 @@ def _detect_dormant_warm_thread(db: sqlite3.Connection, profile, dormant_config=
     return gems
 
 
-def _detect_unanswered_ask(db: sqlite3.Connection, profile) -> list[dict]:
+def _detect_unanswered_ask(db: sqlite3.Connection, profile, bulk_sender_domains=None) -> list[dict]:
     """Detect unanswered asks from this sender."""
     gems = []
     domain = profile["sender_domain"]
+
+    # Skip bulk sender domains
+    if bulk_sender_domains and domain in bulk_sender_domains:
+        return []
 
     threads = db.execute(
         """SELECT t.thread_id, t.subject, t.days_dormant, t.last_sender
@@ -659,6 +693,8 @@ def _detect_unanswered_ask(db: sqlite3.Connection, profile) -> list[dict]:
              AND t.awaiting_response_from = 'user'
              AND t.days_dormant >= 3
              AND t.days_dormant < 14
+             AND t.message_count >= 2
+             AND t.user_participated = 1
            GROUP BY t.thread_id""",
         (domain,),
     ).fetchall()
@@ -687,8 +723,22 @@ def _detect_unanswered_ask(db: sqlite3.Connection, profile) -> list[dict]:
     return gems
 
 
-def _detect_weak_marketing_lead(db: sqlite3.Connection, profile) -> list[dict]:
+def _detect_weak_marketing_lead(db: sqlite3.Connection, profile, bulk_sender_domains=None) -> list[dict]:
     """Detect senders with marketing gaps you can fill."""
+    domain = profile["sender_domain"]
+
+    # Skip bulk sender domains (they ARE the marketers, not leads)
+    if bulk_sender_domains and domain in bulk_sender_domains:
+        return []
+
+    # Require enough data to evaluate
+    if not profile["total_messages"] or profile["total_messages"] < 3:
+        return []
+
+    # Require known industry
+    if not profile["industry"]:
+        return []
+
     soph = profile["marketing_sophistication_avg"] or 0
     size = profile["company_size"] or ""
 
@@ -765,8 +815,14 @@ def _detect_partner_program(db: sqlite3.Connection, profile) -> list[dict]:
     }]
 
 
-def _detect_renewal_leverage(db: sqlite3.Connection, profile) -> list[dict]:
+def _detect_renewal_leverage(db: sqlite3.Connection, profile, bulk_sender_domains=None) -> list[dict]:
     """Detect renewal negotiation windows."""
+    domain = profile["sender_domain"]
+
+    # Skip bulk sender domains
+    if bulk_sender_domains and domain in bulk_sender_domains:
+        return []
+
     renewal_dates = []
     try:
         renewal_dates = json.loads(profile["renewal_dates"]) if profile["renewal_dates"] else []
@@ -981,9 +1037,19 @@ def _detect_vendor_upsell(db: sqlite3.Connection, profile) -> list[dict]:
     }]
 
 
-def _detect_industry_intel(db: sqlite3.Connection, profile) -> list[dict]:
+def _detect_industry_intel(db: sqlite3.Connection, profile, bulk_sender_domains=None) -> list[dict]:
     """Detect useful industry intelligence from this sender's pattern."""
-    if not profile["total_messages"] or profile["total_messages"] < 5:
+    domain = profile["sender_domain"]
+
+    # Skip bulk sender domains
+    if bulk_sender_domains and domain in bulk_sender_domains:
+        return []
+
+    # Require sufficient message volume and known industry
+    if not profile["total_messages"] or profile["total_messages"] < 10:
+        return []
+
+    if not profile["industry"]:
         return []
 
     return [{

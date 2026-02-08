@@ -11,11 +11,14 @@ _nlp = None
 
 
 def _get_nlp(model_name: str = "en_core_web_sm"):
-    """Load and cache spaCy model."""
+    """Load and cache spaCy model. Returns None if spaCy is unavailable."""
     global _nlp
     if _nlp is None:
-        import spacy
-        _nlp = spacy.load(model_name)
+        try:
+            import spacy
+            _nlp = spacy.load(model_name)
+        except Exception:
+            return None
     return _nlp
 
 
@@ -62,8 +65,8 @@ def extract_entities(
 
         entities: list[dict] = []
 
-        # NER on body text
-        if body_clean:
+        # NER on body text (requires spaCy)
+        if nlp and body_clean:
             doc = nlp(body_clean[:50000])  # limit to avoid OOM on huge emails
             for ent in doc.ents:
                 if ent.label_ in ("PERSON", "ORG", "GPE", "MONEY", "DATE"):
@@ -77,8 +80,8 @@ def extract_entities(
                         "source": "body",
                     })
 
-        # NER on signature block
-        if signature_block:
+        # NER on signature block (requires spaCy)
+        if nlp and signature_block:
             doc = nlp(signature_block)
             for ent in doc.ents:
                 if ent.label_ in ("PERSON", "ORG"):

@@ -9,6 +9,7 @@ from gemsieve.web.models import (
     AiClassification,
     Attachment,
     ClassificationOverride,
+    DomainExclusion,
     EngagementDraft,
     ExtractedEntity,
     Gem,
@@ -145,6 +146,15 @@ class ClassificationOverrideView(ModelView):
     fields_default_sort = [("created_at", True)]
 
 
+class DomainExclusionView(ModelView):
+    form_include_pk = True
+    page_size = 25
+    fields = ["domain", "reason", "created_at"]
+    searchable_fields = ["domain", "reason"]
+    sortable_fields = ["domain", "created_at"]
+    fields_default_sort = [("created_at", True)]
+
+
 class SenderProfileView(ModelView):
     page_size = 25
     fields = [
@@ -273,6 +283,7 @@ def create_admin(engine, templates_dir: str | None = None) -> Admin:
     # Classification
     admin.add_view(AiClassificationView(AiClassification, icon="fa fa-brain", label="Classifications"))
     admin.add_view(ClassificationOverrideView(ClassificationOverride, icon="fa fa-edit", label="Overrides"))
+    admin.add_view(DomainExclusionView(DomainExclusion, icon="fa fa-ban", label="Exclusions"))
 
     # Profiles & Gems
     admin.add_view(SenderProfileView(SenderProfile, icon="fa fa-building", label="Profiles"))

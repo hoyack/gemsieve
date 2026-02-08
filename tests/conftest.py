@@ -305,5 +305,10 @@ def setup_full_pipeline(
     from gemsieve.stages.profile import build_profiles, detect_gems
     build_profiles(db)
 
+    # Ensure test profiles have enough messages for gem detection filters
+    domain = msg["from_address"].split("@")[1]
+    db.execute("UPDATE sender_profiles SET total_messages = 3 WHERE sender_domain = ?", (domain,))
+    db.commit()
+
     # Stage 5: Detect gems
     detect_gems(db, engagement_config=engagement_config, scoring_config=scoring_config)

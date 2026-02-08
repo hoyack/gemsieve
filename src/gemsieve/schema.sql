@@ -166,6 +166,13 @@ CREATE TABLE IF NOT EXISTS classification_overrides (
 
 CREATE INDEX IF NOT EXISTS idx_overrides_domain ON classification_overrides(sender_domain);
 
+-- Domain exclusions (filter out specific sender domains from gem detection)
+CREATE TABLE IF NOT EXISTS domain_exclusions (
+    domain TEXT PRIMARY KEY,
+    reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Stage 5: Sender profiles
 CREATE TABLE IF NOT EXISTS sender_profiles (
     sender_domain TEXT PRIMARY KEY,

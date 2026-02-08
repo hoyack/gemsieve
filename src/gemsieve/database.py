@@ -71,6 +71,18 @@ def migrate_db(conn: sqlite3.Connection) -> list[str]:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
             migrations.append(f"Added {table}.{column} ({col_type})")
 
+    # Ensure new tables exist (for databases created before schema update)
+    new_tables = [
+        """CREATE TABLE IF NOT EXISTS domain_exclusions (
+            domain TEXT PRIMARY KEY,
+            reason TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+    ]
+    for ddl in new_tables:
+        conn.execute(ddl)
+        # Check if we actually created it (won't show in migrations if it existed)
+
     if migrations:
         conn.commit()
 
@@ -83,6 +95,7 @@ def db_stats(conn: sqlite3.Connection) -> dict[str, int]:
         "sync_state", "threads", "messages", "attachments",
         "parsed_metadata", "sender_temporal", "parsed_content",
         "extracted_entities", "ai_classification", "classification_overrides",
+        "domain_exclusions",
         "sender_profiles", "gems", "sender_segments", "engagement_drafts",
         "pipeline_runs", "ai_audit_log",
     ]

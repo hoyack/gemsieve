@@ -26,6 +26,9 @@ def _setup_classified_message(db, msg):
     extract_metadata(db, esp_rules_path=esp_rules_path)
     parse_content(db)
 
+    # Ensure test domain is not treated as bulk for gem detection tests
+    db.execute("UPDATE parsed_metadata SET is_bulk = 0 WHERE message_id = ?", (msg["message_id"],))
+
     # Insert mock classification directly
     db.execute(
         """INSERT INTO ai_classification
@@ -66,6 +69,10 @@ def test_detect_gems(db, sample_marketing_message):
     """Gem detection finds weak marketing leads."""
     _setup_classified_message(db, sample_marketing_message)
     build_profiles(db)
+
+    # Ensure profile has enough messages for weak_marketing_lead detection
+    db.execute("UPDATE sender_profiles SET total_messages = 3 WHERE sender_domain = 'coolsaas.io'")
+    db.commit()
 
     count = detect_gems(db)
     assert count > 0
@@ -218,6 +225,11 @@ def test_explanation_enrichment_weak_marketing_lead(db, sample_marketing_message
     """Weak marketing lead gems include estimated_value and urgency."""
     _setup_classified_message(db, sample_marketing_message)
     build_profiles(db)
+
+    # Ensure profile has enough messages for weak_marketing_lead detection
+    db.execute("UPDATE sender_profiles SET total_messages = 3 WHERE sender_domain = 'coolsaas.io'")
+    db.commit()
+
     detect_gems(db)
 
     gems = db.execute(
@@ -252,6 +264,10 @@ def test_detect_gems_new_signature(db, sample_marketing_message):
     """detect_gems accepts engagement_config and scoring_config."""
     _setup_classified_message(db, sample_marketing_message)
     build_profiles(db)
+
+    # Ensure profile has enough messages for weak_marketing_lead detection
+    db.execute("UPDATE sender_profiles SET total_messages = 3 WHERE sender_domain = 'coolsaas.io'")
+    db.commit()
 
     @dataclass
     class MockEngagementConfig:

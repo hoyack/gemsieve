@@ -26,6 +26,9 @@ def _setup_gem_pipeline(db, msg):
     extract_metadata(db, esp_rules_path=esp_rules_path)
     parse_content(db)
 
+    # Ensure test domain is not treated as bulk for gem detection tests
+    db.execute("UPDATE parsed_metadata SET is_bulk = 0 WHERE message_id = ?", (msg["message_id"],))
+
     db.execute(
         """INSERT INTO ai_classification
            (message_id, industry, company_size_estimate, marketing_sophistication,
@@ -43,6 +46,12 @@ def _setup_gem_pipeline(db, msg):
     db.commit()
 
     build_profiles(db)
+
+    # Ensure profile has enough messages for weak_marketing_lead detection
+    domain = msg["from_address"].split("@")[1]
+    db.execute("UPDATE sender_profiles SET total_messages = 3 WHERE sender_domain = ?", (domain,))
+    db.commit()
+
     detect_gems(db)
 
 

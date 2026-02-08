@@ -223,9 +223,9 @@ class TestWarmSignalDetection:
         """Dormant thread with pricing + budget + meeting signals creates a gem."""
         setup_full_pipeline(db, sample_dormant_thread_message)
 
-        # Simulate dormant state
+        # Simulate dormant state with user participation and multi-message thread
         db.execute(
-            "UPDATE threads SET days_dormant = 25, awaiting_response_from = 'user' WHERE thread_id = ?",
+            "UPDATE threads SET days_dormant = 25, awaiting_response_from = 'user', user_participated = 1, message_count = 3 WHERE thread_id = ?",
             (sample_dormant_thread_message["thread_id"],),
         )
         db.commit()
@@ -402,6 +402,14 @@ class TestStrategyGemMapping:
                 "marketing_sophistication": 2,
             },
         )
+
+        # Mark as non-bulk so weak_marketing_lead detection works for this test
+        db.execute("UPDATE parsed_metadata SET is_bulk = 0 WHERE message_id = ?", (sample_marketing_message["message_id"],))
+        db.commit()
+
+        # Re-detect gems with non-bulk status
+        from gemsieve.stages.profile import detect_gems
+        detect_gems(db)
 
         gems = db.execute("SELECT * FROM gems").fetchall()
         gem_types = {g["gem_type"] for g in gems}
@@ -608,6 +616,14 @@ class TestConfigEnforcement:
                 "marketing_sophistication": 2,
             },
         )
+
+        # Mark as non-bulk so weak_marketing_lead detection works for this test
+        db.execute("UPDATE parsed_metadata SET is_bulk = 0 WHERE message_id = ?", (sample_marketing_message["message_id"],))
+        db.commit()
+
+        # Re-detect gems with non-bulk status
+        from gemsieve.stages.profile import detect_gems
+        detect_gems(db)
 
         gems = db.execute("SELECT * FROM gems").fetchall()
         gem_types = {g["gem_type"] for g in gems}

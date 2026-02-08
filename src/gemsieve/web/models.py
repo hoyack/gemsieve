@@ -175,6 +175,14 @@ class ClassificationOverride(Base):
     created_at: Mapped[str | None] = mapped_column(String)
 
 
+class DomainExclusion(Base):
+    __tablename__ = "domain_exclusions"
+
+    domain: Mapped[str] = mapped_column(String, primary_key=True)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str | None] = mapped_column(String)
+
+
 class SenderProfile(Base):
     __tablename__ = "sender_profiles"
 
