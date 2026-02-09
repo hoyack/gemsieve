@@ -213,9 +213,8 @@ fetch('/api/stats/gems-top-stacked/10')
         onClick: function(evt, elements) {
           if (!elements.length) return;
           const el = elements[0];
-          const gt = data.gem_types[el.datasetIndex];
-          const gemId = data.gem_ids[gt][el.index];
-          if (gemId) window.location.href = '/admin/gem/detail/' + gemId;
+          const domain = data.domains[el.index];
+          if (domain) window.location.href = '/admin/score-inspector?domain=' + encodeURIComponent(domain);
         }
       }
     });

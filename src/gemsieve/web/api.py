@@ -20,6 +20,7 @@ from gemsieve.web.models import (
     ParsedMetadata,
     PipelineRun,
     SenderProfile,
+    SenderRelationship,
     SenderSegment,
     Thread,
 )
@@ -417,6 +418,120 @@ async def get_ai_audit_detail(audit_id: int):
             "response_parsed": r.response_parsed,
             "duration_ms": r.duration_ms,
             "created_at": r.created_at,
+        }
+    finally:
+        session.close()
+
+
+@router.get("/score/decompose/{sender_domain:path}")
+async def score_decompose(sender_domain: str):
+    """Decompose opportunity score for a sender domain."""
+    from gemsieve.config import ScoringConfig
+    from gemsieve.stages.segment import decompose_opportunity_score
+
+    session = SessionLocal()
+    try:
+        profile = (
+            session.query(SenderProfile)
+            .filter(SenderProfile.sender_domain == sender_domain)
+            .first()
+        )
+        if not profile:
+            raise HTTPException(404, f"Profile not found for {sender_domain}")
+
+        # Convert SQLAlchemy model to dict for decompose function
+        profile_dict = {
+            c.name: getattr(profile, c.name)
+            for c in SenderProfile.__table__.columns
+        }
+
+        # Load gems for this domain
+        gems = (
+            session.query(Gem)
+            .filter(Gem.sender_domain == sender_domain)
+            .all()
+        )
+        sender_gems = [{"gem_type": g.gem_type} for g in gems]
+
+        # Load relationship type
+        rel = (
+            session.query(SenderRelationship)
+            .filter(SenderRelationship.sender_domain == sender_domain)
+            .first()
+        )
+        rel_type = rel.relationship_type if rel else "unknown"
+
+        config = ScoringConfig()
+        decomposition = decompose_opportunity_score(
+            profile_dict, sender_gems, config.weights, config.target_industries,
+            relationship_type=rel_type, relationship_caps=config.relationship_caps,
+        )
+
+        # Build gem list
+        gem_list = []
+        for g in gems:
+            explanation = {}
+            try:
+                explanation = json.loads(g.explanation) if g.explanation else {}
+            except (json.JSONDecodeError, TypeError):
+                pass
+            gem_list.append({
+                "id": g.id, "gem_type": g.gem_type, "score": g.score,
+                "status": g.status, "created_at": g.created_at,
+                "summary": explanation.get("summary", ""),
+                "urgency": explanation.get("urgency", ""),
+            })
+
+        return {
+            "sender_domain": sender_domain,
+            "company_name": profile.company_name,
+            "industry": profile.industry,
+            "relationship_type": rel_type,
+            "decomposition": decomposition,
+            "gems": gem_list,
+        }
+    finally:
+        session.close()
+
+
+@router.get("/score/gem/{gem_id}/signals")
+async def gem_signals(gem_id: int):
+    """Get detection signals for a specific gem."""
+    session = SessionLocal()
+    try:
+        gem = session.query(Gem).filter(Gem.id == gem_id).first()
+        if not gem:
+            raise HTTPException(404, f"Gem {gem_id} not found")
+
+        explanation = {}
+        try:
+            explanation = json.loads(gem.explanation) if gem.explanation else {}
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        actions = []
+        try:
+            actions = json.loads(gem.recommended_actions) if gem.recommended_actions else []
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Try to get thread subject
+        thread_subject = None
+        if gem.thread_id:
+            thread = session.query(Thread).filter(Thread.thread_id == gem.thread_id).first()
+            if thread:
+                thread_subject = thread.subject
+
+        return {
+            "id": gem.id,
+            "gem_type": gem.gem_type,
+            "sender_domain": gem.sender_domain,
+            "score": gem.score,
+            "status": gem.status,
+            "explanation": explanation,
+            "recommended_actions": actions,
+            "thread_subject": thread_subject,
+            "created_at": gem.created_at,
         }
     finally:
         session.close()

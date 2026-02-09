@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
     from gemsieve.web.views.pipeline import PipelineView
     from gemsieve.web.views.ai_inspector import AIInspectorView
     from gemsieve.web.views.gem_explorer import GemExplorerView
+    from gemsieve.web.views.score_inspector import ScoreInspectorView
 
     admin.add_view(DashboardView(
         label="Dashboard",
@@ -55,6 +56,12 @@ def create_app() -> FastAPI:
         icon="fa fa-gem",
         path="/gem-explorer",
         template_path="gem_explorer.html",
+    ))
+    admin.add_view(ScoreInspectorView(
+        label="Score Inspector",
+        icon="fa fa-chart-bar",
+        path="/score-inspector",
+        template_path="score_inspector.html",
     ))
 
     admin.mount_to(app)

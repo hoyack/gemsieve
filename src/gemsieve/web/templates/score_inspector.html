@@ -1,0 +1,581 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/custom/css/custom.css">
+
+<div class="container-fluid px-4 py-3">
+  <h2 class="mb-3">Score Inspector</h2>
+
+  <!-- Domain Selector -->
+  <div class="card gs-card mb-4">
+    <div class="card-body">
+      <div class="row align-items-end">
+        <div class="col-md-6">
+          <label class="form-label small fw-bold">Select Domain</label>
+          <select id="domainSelect" class="form-select">
+            <option value="">-- Choose a domain --</option>
+            {% for d in scored_domains %}
+            <option value="{{ d.domain }}"
+              {% if selected_domain == d.domain %}selected{% endif %}>
+              {{ d.domain }} (score: {{ d.max_score }})
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-6">
+          <nav id="breadcrumb" aria-label="breadcrumb" style="display:none">
+            <ol class="breadcrumb mb-0" id="breadcrumbList">
+              <li class="breadcrumb-item"><a href="#" onclick="drillReset()">Score Inspector</a></li>
+            </ol>
+          </nav>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading" class="text-center py-5" style="display:none">
+    <div class="spinner-border text-primary" role="status"></div>
+    <div class="text-muted mt-2">Loading score data...</div>
+  </div>
+
+  <!-- No data -->
+  <div id="noData" class="text-center py-5 text-muted" style="display:none">
+    <i class="fa fa-info-circle fa-2x mb-2"></i>
+    <div>Select a domain above to inspect its score composition.</div>
+  </div>
+
+  <!-- Drill Container -->
+  <div id="drill-container"></div>
+</div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+const TIER_COLORS = {
+  inbound_signal: '#4e79a7',
+  base_profile: '#59a14f',
+  gem_bonus: '#f28e2b'
+};
+const COMP_PALETTE = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1'];
+
+let drillState = { domain: null, tier: null, gemId: null };
+let cachedData = null;
+
+const container = document.getElementById('drill-container');
+const loading = document.getElementById('loading');
+const noData = document.getElementById('noData');
+const breadcrumb = document.getElementById('breadcrumb');
+const breadcrumbList = document.getElementById('breadcrumbList');
+
+// Init
+const sel = document.getElementById('domainSelect');
+sel.addEventListener('change', function() {
+  const domain = this.value;
+  if (domain) {
+    drillState = { domain, tier: null, gemId: null };
+    loadDomain(domain);
+  } else {
+    container.innerHTML = '';
+    breadcrumb.style.display = 'none';
+    noData.style.display = '';
+  }
+});
+
+// Auto-load if domain is pre-selected
+if (sel.value) {
+  drillState.domain = sel.value;
+  loadDomain(sel.value);
+} else {
+  noData.style.display = '';
+}
+
+async function loadDomain(domain) {
+  loading.style.display = '';
+  noData.style.display = 'none';
+  container.innerHTML = '';
+  try {
+    const resp = await fetch('/api/score/decompose/' + encodeURIComponent(domain));
+    if (!resp.ok) throw new Error('API error ' + resp.status);
+    cachedData = await resp.json();
+    renderLevel1();
+  } catch(e) {
+    container.innerHTML = '<div class="alert alert-danger">Failed to load score data: ' + e.message + '</div>';
+  } finally {
+    loading.style.display = 'none';
+  }
+}
+
+function updateBreadcrumb() {
+  breadcrumb.style.display = '';
+  let items = '<li class="breadcrumb-item"><a href="#" onclick="drillReset(); return false;">Score Inspector</a></li>';
+  if (drillState.domain) {
+    if (drillState.tier || drillState.gemId) {
+      items += '<li class="breadcrumb-item"><a href="#" onclick="drillToDomain(); return false;">' + drillState.domain + '</a></li>';
+    } else {
+      items += '<li class="breadcrumb-item active">' + drillState.domain + '</li>';
+    }
+  }
+  if (drillState.tier) {
+    const tierLabel = cachedData.decomposition.tiers[drillState.tier].label;
+    if (drillState.gemId) {
+      items += '<li class="breadcrumb-item"><a href="#" onclick="drillToTier(\'' + drillState.tier + '\'); return false;">' + tierLabel + '</a></li>';
+    } else {
+      items += '<li class="breadcrumb-item active">' + tierLabel + '</li>';
+    }
+  }
+  if (drillState.gemId) {
+    items += '<li class="breadcrumb-item active">Gem #' + drillState.gemId + '</li>';
+  }
+  breadcrumbList.innerHTML = items;
+}
+
+function drillReset() {
+  drillState = { domain: null, tier: null, gemId: null };
+  sel.value = '';
+  container.innerHTML = '';
+  breadcrumb.style.display = 'none';
+  noData.style.display = '';
+  cachedData = null;
+}
+
+function drillToDomain() {
+  drillState.tier = null;
+  drillState.gemId = null;
+  renderLevel1();
+}
+
+function drillToTier(tierKey) {
+  drillState.tier = tierKey;
+  drillState.gemId = null;
+  renderLevel2(tierKey);
+}
+
+function drillToGem(gemId) {
+  drillState.gemId = gemId;
+  renderLevel3(gemId);
+}
+
+// ========== LEVEL 1: Tier Overview ==========
+function renderLevel1() {
+  drillState.tier = null;
+  drillState.gemId = null;
+  updateBreadcrumb();
+  const d = cachedData.decomposition;
+  const tiers = d.tiers;
+
+  let html = '';
+
+  // Header info
+  html += '<div class="row mb-3">';
+  html += '<div class="col-md-8">';
+  html += '<h4>' + (cachedData.company_name || cachedData.sender_domain) + '</h4>';
+  html += '<span class="text-muted">' + cachedData.sender_domain + '</span>';
+  if (cachedData.industry) html += ' &middot; <span class="badge bg-secondary">' + cachedData.industry + '</span>';
+  html += ' &middot; <span class="badge bg-info">' + cachedData.relationship_type.replace(/_/g, ' ') + '</span>';
+  html += '</div>';
+  html += '<div class="col-md-4 text-end">';
+  html += '<div class="gs-stat-number">' + d.total_capped + '<span class="fs-6 text-muted">/100</span></div>';
+  if (d.cap_reduced_by > 0) {
+    html += '<div class="text-danger small">Cap reduced by ' + d.cap_reduced_by + ' (raw: ' + d.total_raw + ')</div>';
+  }
+  html += '</div></div>';
+
+  // Stacked bar chart container
+  html += '<div class="card gs-card mb-4"><div class="card-header"><strong>Score Tiers</strong> <span class="text-muted small">click a tier to drill down</span></div>';
+  html += '<div class="card-body"><div id="tierChart"></div></div></div>';
+
+  // Summary cards
+  html += '<div class="row g-3 mb-4">';
+  for (const [key, tier] of Object.entries(tiers)) {
+    const pct = tier.max > 0 ? Math.round(tier.value / tier.max * 100) : 0;
+    html += '<div class="col-md-4">';
+    html += '<div class="card gs-card gs-tier-card" style="cursor:pointer; border-left: 4px solid ' + TIER_COLORS[key] + '" onclick="drillToTier(\'' + key + '\')">';
+    html += '<div class="card-body">';
+    html += '<div class="d-flex justify-content-between align-items-center mb-2">';
+    html += '<strong>' + tier.label + '</strong>';
+    html += '<span class="fs-5 fw-bold">' + tier.value + '<span class="text-muted fs-6">/' + tier.max + '</span></span>';
+    html += '</div>';
+    html += '<div class="progress" style="height:8px"><div class="progress-bar" style="width:' + pct + '%;background:' + TIER_COLORS[key] + '"></div></div>';
+    html += '<div class="mt-2 small text-muted">' + Object.keys(tier.components).length + ' components</div>';
+    html += '</div></div></div>';
+  }
+  html += '</div>';
+
+  // Gem list
+  if (cachedData.gems && cachedData.gems.length) {
+    html += '<div class="card gs-card"><div class="card-header"><strong>Gems for this Domain</strong> <span class="badge bg-success">' + cachedData.gems.length + '</span></div>';
+    html += '<div class="card-body p-0"><table class="table table-sm table-hover mb-0">';
+    html += '<thead><tr><th>ID</th><th>Type</th><th>Score</th><th>Status</th><th>Summary</th><th></th></tr></thead><tbody>';
+    for (const gem of cachedData.gems) {
+      html += '<tr style="cursor:pointer" onclick="drillToGem(' + gem.id + ')">';
+      html += '<td>#' + gem.id + '</td>';
+      html += '<td><span class="badge gs-gem-type-badge">' + (gem.gem_type || '').replace(/_/g, ' ') + '</span></td>';
+      html += '<td><strong>' + (gem.score || 0) + '</strong></td>';
+      html += '<td><span class="badge bg-' + (gem.status === 'acted' ? 'success' : gem.status === 'dismissed' ? 'secondary' : 'primary') + '">' + (gem.status || 'new') + '</span></td>';
+      html += '<td class="text-muted small">' + (gem.summary || '-').substring(0, 80) + '</td>';
+      html += '<td><i class="fa fa-chevron-right text-muted"></i></td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table></div></div>';
+  }
+
+  container.innerHTML = html;
+  drawTierChart(d);
+}
+
+function drawTierChart(d) {
+  const tiers = d.tiers;
+  const chartDiv = document.getElementById('tierChart');
+  if (!chartDiv) return;
+
+  const width = chartDiv.clientWidth || 600;
+  const height = 80;
+  const margin = { top: 10, right: 60, bottom: 20, left: 10 };
+  const innerW = width - margin.left - margin.right;
+
+  const svg = d3.select('#tierChart').append('svg')
+    .attr('width', width).attr('height', height);
+
+  const g = svg.append('g').attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+  const maxScore = 100;
+  const x = d3.scaleLinear().domain([0, maxScore]).range([0, innerW]);
+
+  // Build stacked data
+  let cumX = 0;
+  const bars = [];
+  for (const [key, tier] of Object.entries(tiers)) {
+    bars.push({ key, tier, x: cumX, w: tier.value });
+    cumX += tier.value;
+  }
+
+  // Bars
+  g.selectAll('.tier-bar')
+    .data(bars).enter()
+    .append('rect')
+    .attr('class', 'gs-tier-bar')
+    .attr('x', b => x(b.x))
+    .attr('y', 5)
+    .attr('width', b => Math.max(0, x(b.w)))
+    .attr('height', 30)
+    .attr('rx', 3)
+    .attr('fill', b => TIER_COLORS[b.key])
+    .attr('cursor', 'pointer')
+    .attr('opacity', 0.85)
+    .on('mouseover', function() { d3.select(this).attr('opacity', 1); })
+    .on('mouseout', function() { d3.select(this).attr('opacity', 0.85); })
+    .on('click', function(evt, b) { drillToTier(b.key); })
+    .append('title')
+    .text(b => b.tier.label + ': ' + b.tier.value + '/' + b.tier.max);
+
+  // Labels on bars
+  g.selectAll('.tier-label')
+    .data(bars.filter(b => x(b.w) > 40)).enter()
+    .append('text')
+    .attr('x', b => x(b.x) + x(b.w) / 2)
+    .attr('y', 25)
+    .attr('text-anchor', 'middle')
+    .attr('fill', '#fff')
+    .attr('font-size', '12px')
+    .attr('font-weight', '600')
+    .attr('pointer-events', 'none')
+    .text(b => b.tier.value);
+
+  // Cap line
+  if (d.cap_applied < 100) {
+    const capX = x(d.cap_applied);
+    g.append('line')
+      .attr('class', 'gs-cap-line')
+      .attr('x1', capX).attr('x2', capX)
+      .attr('y1', 0).attr('y2', 40)
+      .attr('stroke', '#e15759')
+      .attr('stroke-width', 2)
+      .attr('stroke-dasharray', '5,3');
+    g.append('text')
+      .attr('x', capX + 4).attr('y', 50)
+      .attr('fill', '#e15759')
+      .attr('font-size', '11px')
+      .text('Cap: ' + d.cap_applied);
+  }
+
+  // Total label
+  g.append('text')
+    .attr('x', innerW + 8).attr('y', 25)
+    .attr('fill', '#333')
+    .attr('font-size', '16px')
+    .attr('font-weight', '700')
+    .text(d.total_capped);
+}
+
+// ========== LEVEL 2: Sub-Components ==========
+function renderLevel2(tierKey) {
+  drillState.tier = tierKey;
+  drillState.gemId = null;
+  updateBreadcrumb();
+
+  const tier = cachedData.decomposition.tiers[tierKey];
+  const components = tier.components;
+  const color = TIER_COLORS[tierKey];
+
+  let html = '';
+  html += '<div class="mb-3"><button class="btn btn-sm btn-outline-secondary" onclick="drillToDomain()"><i class="fa fa-arrow-left"></i> Back to Overview</button></div>';
+  html += '<h4 style="color:' + color + '">' + tier.label + ' <span class="text-muted fs-6">' + tier.value + '/' + tier.max + '</span></h4>';
+  html += '<div class="card gs-card mb-4"><div class="card-body"><div id="compChart"></div></div></div>';
+
+  // Component detail cards
+  html += '<div class="row g-3 mb-4">';
+  let i = 0;
+  for (const [key, comp] of Object.entries(components)) {
+    const pct = comp.max > 0 ? Math.round(comp.value / comp.max * 100) : 0;
+    html += '<div class="col-md-6">';
+    html += '<div class="card gs-card">';
+    html += '<div class="card-body">';
+    html += '<div class="d-flex justify-content-between align-items-center mb-2">';
+    html += '<strong>' + comp.label + '</strong>';
+    html += '<span class="fw-bold">' + comp.value + '<span class="text-muted">/' + comp.max + '</span></span>';
+    html += '</div>';
+    html += '<div class="progress mb-2" style="height:6px"><div class="progress-bar" style="width:' + pct + '%;background:' + COMP_PALETTE[i % COMP_PALETTE.length] + '"></div></div>';
+    html += '<div class="small text-muted">' + comp.detail + '</div>';
+    html += '</div></div></div>';
+    i++;
+  }
+  html += '</div>';
+
+  // Show gem list shortcut
+  if (cachedData.gems && cachedData.gems.length) {
+    html += '<div class="card gs-card"><div class="card-header"><strong>Gems</strong></div>';
+    html += '<div class="card-body p-0"><table class="table table-sm table-hover mb-0">';
+    html += '<thead><tr><th>ID</th><th>Type</th><th>Score</th><th></th></tr></thead><tbody>';
+    for (const gem of cachedData.gems) {
+      html += '<tr style="cursor:pointer" onclick="drillToGem(' + gem.id + ')">';
+      html += '<td>#' + gem.id + '</td>';
+      html += '<td><span class="badge gs-gem-type-badge">' + (gem.gem_type || '').replace(/_/g, ' ') + '</span></td>';
+      html += '<td>' + (gem.score || 0) + '</td>';
+      html += '<td><i class="fa fa-chevron-right text-muted"></i></td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table></div></div>';
+  }
+
+  container.innerHTML = html;
+  drawComponentChart(components, color);
+}
+
+function drawComponentChart(components, tierColor) {
+  const chartDiv = document.getElementById('compChart');
+  if (!chartDiv) return;
+
+  const entries = Object.entries(components);
+  const width = chartDiv.clientWidth || 600;
+  const barH = 32;
+  const gap = 8;
+  const margin = { top: 5, right: 50, bottom: 5, left: 130 };
+  const height = entries.length * (barH + gap) + margin.top + margin.bottom;
+  const innerW = width - margin.left - margin.right;
+
+  const maxVal = d3.max(entries, e => e[1].max) || 1;
+  const x = d3.scaleLinear().domain([0, maxVal]).range([0, innerW]);
+
+  const svg = d3.select('#compChart').append('svg')
+    .attr('width', width).attr('height', height);
+
+  const g = svg.append('g').attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+  entries.forEach(([key, comp], i) => {
+    const y = i * (barH + gap);
+
+    // Label
+    g.append('text')
+      .attr('x', -8).attr('y', y + barH / 2 + 4)
+      .attr('text-anchor', 'end')
+      .attr('font-size', '13px')
+      .attr('fill', '#333')
+      .text(comp.label);
+
+    // Background bar
+    g.append('rect')
+      .attr('class', 'gs-component-bar bar-bg')
+      .attr('x', 0).attr('y', y)
+      .attr('width', x(comp.max))
+      .attr('height', barH)
+      .attr('rx', 4)
+      .attr('fill', '#e9ecef');
+
+    // Value bar
+    g.append('rect')
+      .attr('class', 'gs-component-bar bar-fg')
+      .attr('x', 0).attr('y', y)
+      .attr('width', Math.max(0, x(comp.value)))
+      .attr('height', barH)
+      .attr('rx', 4)
+      .attr('fill', tierColor)
+      .attr('opacity', 0.8);
+
+    // Value text
+    g.append('text')
+      .attr('x', x(comp.max) + 6).attr('y', y + barH / 2 + 4)
+      .attr('font-size', '13px')
+      .attr('font-weight', '600')
+      .attr('fill', '#333')
+      .text(comp.value + '/' + comp.max);
+  });
+}
+
+// ========== LEVEL 3: Gem Signals ==========
+async function renderLevel3(gemId) {
+  drillState.gemId = gemId;
+  updateBreadcrumb();
+
+  container.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div> Loading gem signals...</div>';
+
+  try {
+    const resp = await fetch('/api/score/gem/' + gemId + '/signals');
+    if (!resp.ok) throw new Error('API error ' + resp.status);
+    const gem = await resp.json();
+
+    let html = '';
+    html += '<div class="mb-3"><button class="btn btn-sm btn-outline-secondary" onclick="' + (drillState.tier ? 'drillToTier(\'' + drillState.tier + '\')' : 'drillToDomain()') + '"><i class="fa fa-arrow-left"></i> Back</button></div>';
+
+    html += '<div class="row g-3 mb-4">';
+
+    // Gem info card
+    html += '<div class="col-md-8">';
+    html += '<div class="card gs-card">';
+    html += '<div class="card-header"><strong>Gem #' + gem.id + '</strong> <span class="badge gs-gem-type-badge ms-2">' + (gem.gem_type || '').replace(/_/g, ' ') + '</span></div>';
+    html += '<div class="card-body">';
+    html += '<div class="row mb-3">';
+    html += '<div class="col-sm-4"><span class="text-muted small">Domain</span><br><strong>' + (gem.sender_domain || '-') + '</strong></div>';
+    html += '<div class="col-sm-4"><span class="text-muted small">Score</span><br><strong class="fs-4">' + (gem.score || 0) + '</strong></div>';
+    html += '<div class="col-sm-4"><span class="text-muted small">Status</span><br><span class="badge bg-primary">' + (gem.status || 'new') + '</span></div>';
+    html += '</div>';
+    if (gem.thread_subject) {
+      html += '<div class="mb-3"><span class="text-muted small">Thread</span><br>' + escapeHtml(gem.thread_subject) + '</div>';
+    }
+
+    // Detection signals
+    const signals = gem.explanation.signals || [];
+    if (signals.length) {
+      html += '<div class="mb-3"><span class="text-muted small d-block mb-1">Detection Signals</span>';
+      for (const sig of signals) {
+        html += '<span class="badge bg-light text-dark border me-1 mb-1">' + escapeHtml(sig) + '</span>';
+      }
+      html += '</div>';
+    }
+
+    // Explanation text
+    const summary = gem.explanation.summary || '';
+    if (summary) {
+      html += '<div class="mb-3"><span class="text-muted small d-block mb-1">Summary</span>';
+      html += '<div class="gs-code-block" style="max-height:200px">' + escapeHtml(summary) + '</div>';
+      html += '</div>';
+    }
+
+    // Recommended actions
+    const actions = gem.recommended_actions || [];
+    if (actions.length) {
+      html += '<div class="mb-3"><span class="text-muted small d-block mb-1">Recommended Actions</span><ul class="mb-0">';
+      for (const action of actions) {
+        if (typeof action === 'string') {
+          html += '<li>' + escapeHtml(action) + '</li>';
+        } else if (action.action) {
+          html += '<li><strong>' + escapeHtml(action.action) + '</strong>';
+          if (action.detail) html += ' &mdash; ' + escapeHtml(action.detail);
+          html += '</li>';
+        }
+      }
+      html += '</ul></div>';
+    }
+
+    html += '</div></div></div>';
+
+    // Confidence gauge
+    html += '<div class="col-md-4">';
+    html += '<div class="card gs-card"><div class="card-header"><strong>Confidence</strong></div>';
+    html += '<div class="card-body text-center"><div id="confidenceGauge"></div>';
+    const estimated = gem.explanation.estimated_value || '';
+    const urgency = gem.explanation.urgency || '';
+    if (estimated) html += '<div class="mt-2"><span class="text-muted small">Est. Value</span><br><strong>' + escapeHtml(estimated) + '</strong></div>';
+    if (urgency) html += '<div class="mt-2"><span class="text-muted small">Urgency</span><br><span class="badge bg-' + (urgency === 'high' ? 'danger' : urgency === 'medium' ? 'warning' : 'secondary') + '">' + urgency + '</span></div>';
+    html += '</div></div>';
+
+    // Extra explanation fields
+    const extraKeys = Object.keys(gem.explanation).filter(k => !['signals','summary','confidence','estimated_value','urgency'].includes(k));
+    if (extraKeys.length) {
+      html += '<div class="card gs-card mt-3"><div class="card-header"><strong>Details</strong></div>';
+      html += '<div class="card-body"><dl class="mb-0">';
+      for (const k of extraKeys) {
+        html += '<dt class="small text-muted">' + k.replace(/_/g, ' ') + '</dt>';
+        const v = gem.explanation[k];
+        html += '<dd>' + escapeHtml(typeof v === 'object' ? JSON.stringify(v) : String(v)) + '</dd>';
+      }
+      html += '</dl></div></div>';
+    }
+
+    html += '</div></div>';
+
+    container.innerHTML = html;
+
+    // Draw confidence gauge
+    const confidence = gem.explanation.confidence || 0;
+    drawConfidenceGauge(confidence);
+
+  } catch(e) {
+    container.innerHTML = '<div class="alert alert-danger">Failed to load gem signals: ' + e.message + '</div>';
+  }
+}
+
+function drawConfidenceGauge(value) {
+  const gaugeDiv = document.getElementById('confidenceGauge');
+  if (!gaugeDiv) return;
+
+  const size = 140;
+  const radius = size / 2 - 15;
+  const tau = 2 * Math.PI;
+  // Semicircle gauge
+  const startAngle = -Math.PI / 2;
+  const endAngle = Math.PI / 2;
+
+  const svg = d3.select('#confidenceGauge').append('svg')
+    .attr('width', size).attr('height', size / 2 + 30);
+
+  const g = svg.append('g')
+    .attr('transform', 'translate(' + size / 2 + ',' + (size / 2) + ')');
+
+  const arc = d3.arc()
+    .innerRadius(radius - 12)
+    .outerRadius(radius)
+    .startAngle(startAngle);
+
+  // Background arc
+  g.append('path')
+    .datum({ endAngle: endAngle })
+    .attr('d', arc)
+    .attr('fill', '#e9ecef');
+
+  // Value arc
+  const pct = Math.min(1, Math.max(0, typeof value === 'number' ? value : parseFloat(value) || 0));
+  const valueAngle = startAngle + (endAngle - startAngle) * pct;
+  const gaugeColor = pct >= 0.7 ? '#28a745' : pct >= 0.4 ? '#ffc107' : '#dc3545';
+  g.append('path')
+    .datum({ endAngle: valueAngle })
+    .attr('d', arc)
+    .attr('fill', gaugeColor);
+
+  // Center text
+  g.append('text')
+    .attr('class', 'gs-score-gauge')
+    .attr('y', -5)
+    .attr('text-anchor', 'middle')
+    .attr('font-size', '24px')
+    .attr('font-weight', '700')
+    .attr('fill', '#333')
+    .text(typeof value === 'number' ? (value * 100).toFixed(0) + '%' : value);
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+</script>
+{% endblock %}

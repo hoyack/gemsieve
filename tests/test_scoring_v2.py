@@ -11,7 +11,7 @@ from gemsieve.config import RelationshipScoreCaps, ScoringConfig, ScoringWeights
 from gemsieve.database import init_db
 from gemsieve.stages.profile import build_profiles, detect_gems
 from gemsieve.stages.relationships import set_relationship
-from gemsieve.stages.segment import _opportunity_score, score_gems
+from gemsieve.stages.segment import _opportunity_score, decompose_opportunity_score, score_gems
 
 
 @pytest.fixture
@@ -219,3 +219,82 @@ class TestScoreGemsIntegration:
 
         gem = db.execute("SELECT score FROM gems WHERE sender_domain = 'vendor.com'").fetchone()
         assert gem["score"] <= 25  # vendor cap
+
+
+class TestDecomposeOpportunityScore:
+    def test_decompose_matches_score(self, db):
+        """decompose_opportunity_score().total_capped should equal _opportunity_score()."""
+        profile = _make_profile_row(db, "decomp.com",
+                                     thread_initiation_ratio=0.2,
+                                     user_reply_rate=0.7,
+                                     monetary_signals='[{"amount": "$5000"}]')
+        gems = [{"gem_type": "dormant_warm_thread"}, {"gem_type": "industry_intel"}]
+        weights = ScoringWeights()
+        caps = RelationshipScoreCaps()
+
+        for rel_type in ["unknown", "inbound_prospect", "my_vendor", "warm_contact",
+                         "my_infrastructure", "selling_to_me"]:
+            score = _opportunity_score(profile, gems, weights, ["SaaS"],
+                                       relationship_type=rel_type,
+                                       relationship_caps=caps)
+            decomp = decompose_opportunity_score(profile, gems, weights, ["SaaS"],
+                                                  relationship_type=rel_type,
+                                                  relationship_caps=caps)
+            assert decomp["total_capped"] == score, (
+                f"Mismatch for {rel_type}: decompose={decomp['total_capped']} vs score={score}"
+            )
+
+    def test_decompose_structure(self, db):
+        """decompose result should have expected keys and tiers."""
+        profile = _make_profile_row(db, "struct.com")
+        gems = [{"gem_type": "industry_intel"}]
+        weights = ScoringWeights()
+
+        result = decompose_opportunity_score(profile, gems, weights, ["SaaS"])
+
+        assert "total_raw" in result
+        assert "total_capped" in result
+        assert "cap_applied" in result
+        assert "cap_source" in result
+        assert "tiers" in result
+        assert set(result["tiers"].keys()) == {"inbound_signal", "base_profile", "gem_bonus"}
+
+        for tier_key, tier in result["tiers"].items():
+            assert "label" in tier
+            assert "max" in tier
+            assert "value" in tier
+            assert "components" in tier
+            for comp_key, comp in tier["components"].items():
+                assert "label" in comp
+                assert "max" in comp
+                assert "value" in comp
+                assert "detail" in comp
+
+    def test_tier_values_sum_to_raw(self, db):
+        """Sum of tier values should equal total_raw."""
+        profile = _make_profile_row(db, "sumcheck.com",
+                                     thread_initiation_ratio=0.3,
+                                     user_reply_rate=0.6)
+        gems = [{"gem_type": "dormant_warm_thread"}, {"gem_type": "partner_program"}]
+        weights = ScoringWeights()
+
+        result = decompose_opportunity_score(profile, gems, weights, ["SaaS"])
+        tier_sum = sum(t["value"] for t in result["tiers"].values())
+        assert abs(tier_sum - result["total_raw"]) < 0.2  # allow rounding
+
+    def test_cap_reduced_by(self, db):
+        """cap_reduced_by should reflect amount lost to relationship cap."""
+        profile = _make_profile_row(db, "capped.com",
+                                     thread_initiation_ratio=0.1,
+                                     user_reply_rate=0.9)
+        gems = [{"gem_type": "dormant_warm_thread"}, {"gem_type": "procurement_signal"},
+                {"gem_type": "industry_intel"}]
+        weights = ScoringWeights()
+        caps = RelationshipScoreCaps()
+
+        result = decompose_opportunity_score(profile, gems, weights, ["SaaS"],
+                                              relationship_type="my_infrastructure",
+                                              relationship_caps=caps)
+        assert result["cap_applied"] == 5
+        assert result["total_capped"] <= 5
+        assert result["cap_reduced_by"] >= 0

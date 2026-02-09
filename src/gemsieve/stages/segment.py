@@ -257,6 +257,209 @@ def _opportunity_score(
     return min(int(score), cap, 100)
 
 
+def decompose_opportunity_score(
+    profile, sender_gems: list, weights, target_industries: list[str],
+    relationship_type: str = "unknown",
+    relationship_caps: RelationshipScoreCaps | None = None,
+) -> dict:
+    """Decompose opportunity score into tiers and components.
+
+    Same inputs as _opportunity_score(), returns structured breakdown instead of int.
+    """
+    if relationship_caps is None:
+        relationship_caps = RelationshipScoreCaps()
+
+    # --- 1. Inbound Signal Score (max 30) ---
+    initiation = profile["thread_initiation_ratio"]
+    reply_rate = profile["user_reply_rate"]
+
+    initiation_val = 0.0
+    initiation_detail = "No initiation data"
+    if initiation is not None:
+        initiation_val = (1.0 - initiation) * weights.inbound_initiation
+        initiation_detail = f"Initiation ratio {initiation:.2f} (lower = they reach out more)"
+
+    engagement_val = 0.0
+    engagement_detail = "No reply rate data"
+    if reply_rate is not None:
+        engagement_val = reply_rate * weights.inbound_engagement
+        engagement_detail = f"User reply rate {reply_rate:.2f}"
+
+    inbound_total = initiation_val + engagement_val
+
+    # --- 2. Base Profile Score (max 40) ---
+    # Reachability
+    size = profile["company_size"] or ""
+    if size == "small":
+        reachability_val = float(weights.reachability)
+        reachability_detail = "Small company (full score)"
+    elif size == "medium":
+        reachability_val = weights.reachability * 0.67
+        reachability_detail = "Medium company (67%)"
+    else:
+        reachability_val = weights.reachability * 0.2
+        reachability_detail = f"Large/unknown company size '{size}' (20%)"
+
+    # Relevance
+    industry = profile["industry"] or ""
+    if industry in target_industries:
+        relevance_val = float(weights.relevance)
+        relevance_detail = f"Target industry: {industry}"
+    else:
+        relevance_val = weights.relevance * 0.3
+        relevance_detail = f"Non-target industry: {industry or 'unknown'} (30%)"
+
+    # Recency
+    recency_val = 0.0
+    recency_detail = "No last contact date"
+    last_contact = profile["last_contact"]
+    if last_contact:
+        try:
+            from email.utils import parsedate_to_datetime
+            last_dt = parsedate_to_datetime(last_contact)
+            days = (datetime.now(timezone.utc) - last_dt).days
+            if days <= 30:
+                recency_val = float(weights.recency)
+                recency_detail = f"Last contact {days}d ago (within 30d, full score)"
+            elif days <= 90:
+                recency_val = weights.recency * 0.5
+                recency_detail = f"Last contact {days}d ago (within 90d, 50%)"
+            else:
+                recency_detail = f"Last contact {days}d ago (>90d, no score)"
+        except Exception:
+            recency_detail = "Failed to parse last contact date"
+
+    # Known contacts
+    contacts = []
+    try:
+        contacts = json.loads(profile["known_contacts"]) if profile["known_contacts"] else []
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    known_contacts_val = 0.0
+    if contacts and any(c.get("role") for c in contacts):
+        known_contacts_val = float(weights.known_contacts)
+        known_contacts_detail = f"{len(contacts)} contacts with roles"
+    elif contacts:
+        known_contacts_val = weights.known_contacts * 0.2
+        known_contacts_detail = f"{len(contacts)} contacts without roles (20%)"
+    else:
+        known_contacts_detail = "No known contacts"
+
+    # Monetary signals
+    monetary_eligible = {"inbound_prospect", "warm_contact", "unknown", "potential_partner"}
+    monetary_val = 0.0
+    if relationship_type in monetary_eligible:
+        monetary = []
+        try:
+            monetary = json.loads(profile["monetary_signals"]) if profile["monetary_signals"] else []
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if monetary:
+            monetary_val = float(weights.monetary_signals)
+            monetary_detail = f"{len(monetary)} monetary signals detected"
+        else:
+            monetary_detail = "No monetary signals"
+    else:
+        monetary_detail = f"Not eligible ({relationship_type})"
+
+    base_total = reachability_val + relevance_val + recency_val + known_contacts_val + monetary_val
+
+    # --- 3. Gem Bonus (max 30) ---
+    gem_types = set(g["gem_type"] for g in sender_gems)
+    diversity_val = min(len(gem_types) * weights.gem_diversity_per_type, weights.gem_diversity_cap)
+    diversity_detail = f"{len(gem_types)} unique type(s) x {weights.gem_diversity_per_type} (cap {weights.gem_diversity_cap})"
+
+    dormant_val = float(weights.dormant_thread_bonus) if "dormant_warm_thread" in gem_types else 0.0
+    dormant_detail = "Dormant warm thread detected" if dormant_val else "No dormant warm thread"
+
+    partner_val = float(weights.partner_bonus) if "partner_program" in gem_types else 0.0
+    partner_detail = "Partner program gem detected" if partner_val else "No partner program gem"
+
+    procurement_val = float(weights.procurement_bonus) if "procurement_signal" in gem_types else 0.0
+    procurement_detail = "Procurement signal detected" if procurement_val else "No procurement signal"
+
+    gem_total = diversity_val + dormant_val + partner_val + procurement_val
+
+    # --- 4. Cap ---
+    total_raw = inbound_total + base_total + gem_total
+    cap = getattr(relationship_caps, relationship_type, 100)
+    effective_cap = min(cap, 100)
+    total_capped = min(int(total_raw), effective_cap)
+
+    return {
+        "total_raw": round(total_raw, 1),
+        "total_capped": total_capped,
+        "cap_applied": effective_cap,
+        "cap_source": relationship_type,
+        "cap_reduced_by": max(0, int(total_raw) - total_capped),
+        "tiers": {
+            "inbound_signal": {
+                "label": "Inbound Signal Score", "max": 30,
+                "value": round(inbound_total, 1),
+                "components": {
+                    "initiation": {
+                        "label": "They Reach Out", "max": weights.inbound_initiation,
+                        "value": round(initiation_val, 1), "detail": initiation_detail,
+                    },
+                    "engagement": {
+                        "label": "User Engagement", "max": weights.inbound_engagement,
+                        "value": round(engagement_val, 1), "detail": engagement_detail,
+                    },
+                },
+            },
+            "base_profile": {
+                "label": "Base Profile Score", "max": 40,
+                "value": round(base_total, 1),
+                "components": {
+                    "reachability": {
+                        "label": "Reachability", "max": weights.reachability,
+                        "value": round(reachability_val, 1), "detail": reachability_detail,
+                    },
+                    "relevance": {
+                        "label": "Relevance", "max": weights.relevance,
+                        "value": round(relevance_val, 1), "detail": relevance_detail,
+                    },
+                    "recency": {
+                        "label": "Recency", "max": weights.recency,
+                        "value": round(recency_val, 1), "detail": recency_detail,
+                    },
+                    "known_contacts": {
+                        "label": "Known Contacts", "max": weights.known_contacts,
+                        "value": round(known_contacts_val, 1), "detail": known_contacts_detail,
+                    },
+                    "monetary_signals": {
+                        "label": "Monetary Signals", "max": weights.monetary_signals,
+                        "value": round(monetary_val, 1), "detail": monetary_detail,
+                    },
+                },
+            },
+            "gem_bonus": {
+                "label": "Gem Bonus", "max": 30,
+                "value": round(gem_total, 1),
+                "components": {
+                    "diversity": {
+                        "label": "Type Diversity", "max": weights.gem_diversity_cap,
+                        "value": round(diversity_val, 1), "detail": diversity_detail,
+                    },
+                    "dormant_thread": {
+                        "label": "Dormant Thread", "max": weights.dormant_thread_bonus,
+                        "value": round(dormant_val, 1), "detail": dormant_detail,
+                    },
+                    "partner": {
+                        "label": "Partner", "max": weights.partner_bonus,
+                        "value": round(partner_val, 1), "detail": partner_detail,
+                    },
+                    "procurement": {
+                        "label": "Procurement", "max": weights.procurement_bonus,
+                        "value": round(procurement_val, 1), "detail": procurement_detail,
+                    },
+                },
+            },
+        },
+    }
+
+
 def _classify_spend_subsegment(db, profile) -> list[tuple[str, float]]:
     """Classify spend map sub-segments with churned vendor detection."""
     subs = []

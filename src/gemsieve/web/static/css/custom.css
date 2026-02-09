@@ -85,3 +85,20 @@
   background: transparent;
   border-top: 1px solid rgba(0,0,0,0.06);
 }
+
+/* Score Inspector */
+.gs-tier-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.gs-tier-bar:hover { opacity: 1 !important; }
+
+.gs-component-bar.bar-bg { opacity: 0.6; }
+
+.gs-cap-line { stroke-dasharray: 5,3; }
+
+.gs-score-gauge text { font-weight: 700; }
+
+#drill-container { min-height: 200px; }
