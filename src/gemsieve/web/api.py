@@ -184,6 +184,71 @@ async def top_gems(n: int = 10):
         session.close()
 
 
+@router.get("/stats/gems-top-stacked/{n}")
+async def top_gems_stacked(n: int = 10):
+    """Top N domains by total gem score, with per-gem-type breakdown."""
+    session = SessionLocal()
+    try:
+        from sqlalchemy import func
+
+        # 1. Top N domains by total score
+        top_domains = (
+            session.query(
+                Gem.sender_domain,
+                func.sum(Gem.score).label("total"),
+            )
+            .filter(Gem.sender_domain.isnot(None), Gem.score.isnot(None))
+            .group_by(Gem.sender_domain)
+            .order_by(func.sum(Gem.score).desc())
+            .limit(n)
+            .all()
+        )
+        domains = [r[0] for r in top_domains]
+        if not domains:
+            return {"domains": [], "gem_types": [], "datasets": {}, "gem_ids": {}}
+
+        # 2. All gems for those domains, grouped by domain + gem_type
+        rows = (
+            session.query(
+                Gem.sender_domain,
+                Gem.gem_type,
+                func.sum(Gem.score).label("type_score"),
+                # highest-scoring gem id per group (for click target)
+                func.max(Gem.id).label("best_id"),
+            )
+            .filter(Gem.sender_domain.in_(domains), Gem.score.isnot(None))
+            .group_by(Gem.sender_domain, Gem.gem_type)
+            .all()
+        )
+
+        # Build lookup: (domain, gem_type) -> (score, gem_id)
+        lookup: dict[tuple[str, str], tuple[int, int]] = {}
+        gem_types_set: set[str] = set()
+        for r in rows:
+            lookup[(r[0], r[1])] = (int(r[2]), int(r[3]))
+            gem_types_set.add(r[1])
+
+        gem_types = sorted(gem_types_set)
+
+        # 3. Build parallel arrays
+        datasets: dict[str, list[int]] = {gt: [] for gt in gem_types}
+        gem_ids: dict[str, list[int | None]] = {gt: [] for gt in gem_types}
+        for domain in domains:
+            for gt in gem_types:
+                entry = lookup.get((domain, gt))
+                datasets[gt].append(entry[0] if entry else 0)
+                gem_ids[gt].append(entry[1] if entry else None)
+
+        return {
+            "domains": domains,
+            "gem_types": gem_types,
+            "datasets": datasets,
+            "gem_ids": gem_ids,
+        }
+    finally:
+        session.close()
+
+
 @router.get("/stats/by-industry")
 async def by_industry():
     """Industry breakdown for charts."""

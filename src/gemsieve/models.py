@@ -14,7 +14,6 @@ class GemType(str, Enum):
     UNANSWERED_ASK = "unanswered_ask"
     PARTNER_PROGRAM = "partner_program"
     RENEWAL_LEVERAGE = "renewal_leverage"
-    VENDOR_UPSELL = "vendor_upsell"
     DISTRIBUTION_CHANNEL = "distribution_channel"
     CO_MARKETING = "co_marketing"
     PROCUREMENT_SIGNAL = "procurement_signal"
@@ -73,6 +72,7 @@ class ParsedMetadata:
     mail_server: str | None = None
     precedence: str | None = None
     feedback_id: str | None = None
+    sender_subdomain: str | None = None
 
 
 @dataclass
@@ -159,6 +159,8 @@ class SenderProfile:
     authentication_quality: str | None = None
     unsubscribe_url: str | None = None
     economic_segments: list[str] = field(default_factory=list)
+    thread_initiation_ratio: float | None = None
+    user_reply_rate: float | None = None
 
 
 @dataclass

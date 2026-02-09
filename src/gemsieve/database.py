@@ -62,6 +62,9 @@ def migrate_db(conn: sqlite3.Connection) -> list[str]:
         ("parsed_metadata", "mail_server", "TEXT"),
         ("parsed_metadata", "precedence", "TEXT"),
         ("parsed_metadata", "feedback_id", "TEXT"),
+        ("parsed_metadata", "sender_subdomain", "TEXT"),
+        ("sender_profiles", "thread_initiation_ratio", "REAL"),
+        ("sender_profiles", "user_reply_rate", "REAL"),
     ]
 
     for table, column, col_type in expected_columns:
@@ -77,6 +80,14 @@ def migrate_db(conn: sqlite3.Connection) -> list[str]:
             domain TEXT PRIMARY KEY,
             reason TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS sender_relationships (
+            sender_domain TEXT PRIMARY KEY,
+            relationship_type TEXT NOT NULL,
+            relationship_note TEXT,
+            suppress_gems BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            source TEXT DEFAULT 'manual'
         )""",
     ]
     for ddl in new_tables:
@@ -95,7 +106,7 @@ def db_stats(conn: sqlite3.Connection) -> dict[str, int]:
         "sync_state", "threads", "messages", "attachments",
         "parsed_metadata", "sender_temporal", "parsed_content",
         "extracted_entities", "ai_classification", "classification_overrides",
-        "domain_exclusions",
+        "domain_exclusions", "sender_relationships",
         "sender_profiles", "gems", "sender_segments", "engagement_drafts",
         "pipeline_runs", "ai_audit_log",
     ]

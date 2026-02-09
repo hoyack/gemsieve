@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import yaml
 
-from gemsieve.config import ScoringConfig
+from gemsieve.config import RelationshipScoreCaps, ScoringConfig
 
 
 def assign_segments(db: sqlite3.Connection) -> int:
@@ -75,7 +75,7 @@ def assign_segments(db: sqlite3.Connection) -> int:
 
 
 def score_gems(db: sqlite3.Connection, config: ScoringConfig | None = None) -> int:
-    """Apply opportunity scoring formula to all gems.
+    """Apply relationship-aware opportunity scoring formula to all gems.
 
     Returns count of gems scored.
     """
@@ -84,6 +84,11 @@ def score_gems(db: sqlite3.Connection, config: ScoringConfig | None = None) -> i
 
     weights = config.weights
     target_industries = config.target_industries
+    caps = config.relationship_caps
+
+    # Load sender relationships
+    rel_rows = db.execute("SELECT sender_domain, relationship_type FROM sender_relationships").fetchall()
+    relationships = {r["sender_domain"]: r["relationship_type"] for r in rel_rows}
 
     gems = db.execute("SELECT id, sender_domain FROM gems").fetchall()
     scored = 0
@@ -104,7 +109,9 @@ def score_gems(db: sqlite3.Connection, config: ScoringConfig | None = None) -> i
             "SELECT gem_type FROM gems WHERE sender_domain = ?", (domain,)
         ).fetchall()
 
-        score = _opportunity_score(profile, sender_gems, weights, target_industries)
+        rel_type = relationships.get(domain, "unknown")
+        score = _opportunity_score(profile, sender_gems, weights, target_industries,
+                                   relationship_type=rel_type, relationship_caps=caps)
 
         db.execute("UPDATE gems SET score = ? WHERE id = ?", (score, gem_id))
         scored += 1
@@ -153,11 +160,34 @@ def evaluate_custom_segments(
 
 
 def _opportunity_score(
-    profile, sender_gems: list, weights, target_industries: list[str]
+    profile, sender_gems: list, weights, target_industries: list[str],
+    relationship_type: str = "unknown",
+    relationship_caps: RelationshipScoreCaps | None = None,
 ) -> int:
-    """Compute opportunity score for a sender based on profile and gems."""
+    """Compute relationship-aware opportunity score for a sender.
+
+    New formula (Phase 3):
+    1. Inbound Signal Score (max 30): based on who-initiates and user engagement
+    2. Base Profile Score (max 40): reachability + relevance + recency + contacts + monetary
+    3. Gem Bonus (max 30): diversity + specific bonuses
+    4. Apply relationship cap
+    """
+    if relationship_caps is None:
+        relationship_caps = RelationshipScoreCaps()
+
     score = 0.0
 
+    # --- 1. Inbound Signal Score (max 30) ---
+    initiation = profile["thread_initiation_ratio"]
+    reply_rate = profile["user_reply_rate"]
+
+    if initiation is not None:
+        # Lower initiation = they reach out more = better prospect signal
+        score += (1.0 - initiation) * weights.inbound_initiation
+    if reply_rate is not None:
+        score += reply_rate * weights.inbound_engagement
+
+    # --- 2. Base Profile Score (max 40) ---
     # Reachability
     size = profile["company_size"] or ""
     if size == "small":
@@ -166,17 +196,6 @@ def _opportunity_score(
         score += weights.reachability * 0.67
     else:
         score += weights.reachability * 0.2
-
-    # Budget signal (ESP tier)
-    esp = profile["esp_used"] or ""
-    high_budget_esps = {"HubSpot", "Klaviyo", "ActiveCampaign", "salesforce_mc"}
-    mid_budget_esps = {"SendGrid", "amazon_ses", "postmark"}
-    if esp in high_budget_esps:
-        score += weights.budget_signal
-    elif esp in mid_budget_esps:
-        score += weights.budget_signal * 0.7
-    else:
-        score += weights.budget_signal * 0.3
 
     # Relevance
     industry = profile["industry"] or ""
@@ -210,28 +229,32 @@ def _opportunity_score(
     elif contacts:
         score += weights.known_contacts * 0.2
 
-    # Monetary signals
-    monetary = []
-    try:
-        monetary = json.loads(profile["monetary_signals"]) if profile["monetary_signals"] else []
-    except (json.JSONDecodeError, TypeError):
-        pass
-    if monetary:
-        score += weights.monetary_signals
+    # Monetary signals (only for prospect/warm/unknown relationships)
+    monetary_eligible = {"inbound_prospect", "warm_contact", "unknown", "potential_partner"}
+    if relationship_type in monetary_eligible:
+        monetary = []
+        try:
+            monetary = json.loads(profile["monetary_signals"]) if profile["monetary_signals"] else []
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if monetary:
+            score += weights.monetary_signals
 
-    # Gem diversity bonus
+    # --- 3. Gem Bonus (max 30) ---
     gem_types = set(g["gem_type"] for g in sender_gems)
-    score += min(len(gem_types) * 8, weights.gem_diversity)
+    score += min(len(gem_types) * weights.gem_diversity_per_type, weights.gem_diversity_cap)
 
     # Specific gem bonuses
     if "dormant_warm_thread" in gem_types:
         score += weights.dormant_thread_bonus
     if "partner_program" in gem_types:
         score += weights.partner_bonus
-    if "renewal_leverage" in gem_types:
-        score += weights.renewal_bonus
+    if "procurement_signal" in gem_types:
+        score += weights.procurement_bonus
 
-    return min(int(score), 100)
+    # --- 4. Apply relationship cap ---
+    cap = getattr(relationship_caps, relationship_type, 100)
+    return min(int(score), cap, 100)
 
 
 def _classify_spend_subsegment(db, profile) -> list[tuple[str, float]]:

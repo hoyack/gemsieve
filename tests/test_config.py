@@ -53,6 +53,8 @@ def test_load_config_from_yaml(monkeypatch, tmp_path):
 def test_scoring_config_defaults():
     """Scoring config has correct default weights."""
     config = Config()
-    assert config.scoring.weights.reachability == 15
-    assert config.scoring.weights.gem_diversity == 24
+    assert config.scoring.weights.reachability == 10
+    assert config.scoring.weights.gem_diversity_cap == 15
+    assert config.scoring.weights.inbound_initiation == 15
     assert config.scoring.dormant_thread.min_dormancy_days == 14
+    assert config.scoring.relationship_caps.my_vendor == 25

@@ -50,16 +50,35 @@ class EntityConfig:
 
 @dataclass
 class ScoringWeights:
-    reachability: int = 15
-    budget_signal: int = 10
-    relevance: int = 10
-    recency: int = 10
-    known_contacts: int = 10
-    monetary_signals: int = 5
-    gem_diversity: int = 24
-    dormant_thread_bonus: int = 8
-    partner_bonus: int = 5
-    renewal_bonus: int = 3
+    # Inbound signal (max 30)
+    inbound_initiation: int = 15
+    inbound_engagement: int = 15
+    # Base profile (max 40)
+    reachability: int = 10
+    relevance: int = 8
+    recency: int = 8
+    known_contacts: int = 7
+    monetary_signals: int = 7
+    # Gem bonus (max 30)
+    gem_diversity_per_type: int = 5
+    gem_diversity_cap: int = 15
+    dormant_thread_bonus: int = 10
+    partner_bonus: int = 3
+    procurement_bonus: int = 7
+
+
+@dataclass
+class RelationshipScoreCaps:
+    inbound_prospect: int = 100
+    warm_contact: int = 90
+    potential_partner: int = 80
+    community: int = 50
+    unknown: int = 60
+    selling_to_me: int = 20
+    my_vendor: int = 25
+    my_service_provider: int = 15
+    my_infrastructure: int = 5
+    institutional: int = 5
 
 
 @dataclass
@@ -76,6 +95,7 @@ class ScoringConfig:
     ])
     weights: ScoringWeights = field(default_factory=ScoringWeights)
     dormant_thread: DormantThreadConfig = field(default_factory=DormantThreadConfig)
+    relationship_caps: RelationshipScoreCaps = field(default_factory=RelationshipScoreCaps)
 
 
 @dataclass
@@ -100,6 +120,7 @@ class Config:
     engagement: EngagementConfig = field(default_factory=EngagementConfig)
     esp_fingerprints_file: str = "esp_rules.yaml"
     custom_segments_file: str = "segments.yaml"
+    known_entities_file: str = "known_entities.yaml"
 
 
 def _merge_dict(base: dict, override: dict) -> dict:

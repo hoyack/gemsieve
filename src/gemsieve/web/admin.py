@@ -18,6 +18,7 @@ from gemsieve.web.models import (
     ParsedMetadata,
     PipelineRun,
     SenderProfile,
+    SenderRelationship,
     SenderSegment,
     SenderTemporal,
     SyncState,
@@ -143,6 +144,19 @@ class ClassificationOverrideView(ModelView):
     ]
     searchable_fields = ["sender_domain", "field_name"]
     sortable_fields = ["created_at", "field_name"]
+    fields_default_sort = [("created_at", True)]
+
+
+class SenderRelationshipView(ModelView):
+    form_include_pk = True
+    page_size = 25
+    fields = [
+        "sender_domain", "relationship_type", "relationship_note",
+        "suppress_gems", "source", "created_at",
+    ]
+    exclude_fields_from_list = ["relationship_note"]
+    searchable_fields = ["sender_domain", "relationship_type"]
+    sortable_fields = ["sender_domain", "relationship_type", "source", "created_at"]
     fields_default_sort = [("created_at", True)]
 
 
@@ -284,6 +298,7 @@ def create_admin(engine, templates_dir: str | None = None) -> Admin:
     admin.add_view(AiClassificationView(AiClassification, icon="fa fa-brain", label="Classifications"))
     admin.add_view(ClassificationOverrideView(ClassificationOverride, icon="fa fa-edit", label="Overrides"))
     admin.add_view(DomainExclusionView(DomainExclusion, icon="fa fa-ban", label="Exclusions"))
+    admin.add_view(SenderRelationshipView(SenderRelationship, icon="fa fa-handshake", label="Relationships"))
 
     # Profiles & Gems
     admin.add_view(SenderProfileView(SenderProfile, icon="fa fa-building", label="Profiles"))

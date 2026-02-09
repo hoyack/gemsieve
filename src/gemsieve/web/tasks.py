@@ -254,8 +254,11 @@ class TaskManager:
 
         elif stage_name == "profile":
             from gemsieve.stages.profile import build_profiles, detect_gems
+            from gemsieve.stages.relationships import detect_relationships
             count = build_profiles(conn)
-            count += detect_gems(conn, engagement_config=config.engagement, scoring_config=config.scoring)
+            detect_relationships(conn, known_entities_file=config.known_entities_file, apply=True)
+            count += detect_gems(conn, engagement_config=config.engagement, scoring_config=config.scoring,
+                                 known_entities_file=config.known_entities_file)
             return count
 
         elif stage_name == "segment":

@@ -261,6 +261,85 @@ def overrides(
     conn.close()
 
 
+# --- Relationship commands ---
+
+@app.command()
+def relationship(
+    sender: str = typer.Option(..., "--sender", help="Sender domain to tag."),
+    rel_type: str = typer.Option(..., "--type", "-t", help="Relationship type."),
+    note: Optional[str] = typer.Option(None, "--note", help="Optional note."),
+    suppress: bool = typer.Option(False, "--suppress", help="Suppress gems from this sender."),
+):
+    """Tag a single sender with a relationship type."""
+    from gemsieve.config import load_config
+    from gemsieve.database import get_db, init_db
+    from gemsieve.stages.relationships import set_relationship
+
+    config = load_config()
+    conn = get_db(config)
+    init_db(conn)
+
+    set_relationship(conn, sender, rel_type, note=note, suppress=suppress, source="manual")
+    typer.echo(f"Set {sender} -> {rel_type} (suppress={suppress})")
+    conn.close()
+
+
+@app.command()
+def relationships(
+    list_all: bool = typer.Option(False, "--list", help="List all relationships."),
+    rel_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by relationship type."),
+    auto_detect: bool = typer.Option(False, "--auto-detect", help="Run auto-detection on all profiles."),
+    apply: bool = typer.Option(False, "--apply", help="Apply auto-detected relationships."),
+    import_file: Optional[str] = typer.Option(None, "--import", help="Import relationships from YAML file."),
+):
+    """Manage sender relationships."""
+    from gemsieve.config import load_config
+    from gemsieve.database import get_db, init_db
+    from gemsieve.stages.relationships import (
+        detect_relationships,
+        import_relationships,
+        list_relationships,
+    )
+
+    config = load_config()
+    conn = get_db(config)
+    init_db(conn)
+
+    if import_file:
+        count = import_relationships(conn, import_file)
+        typer.echo(f"Imported {count} relationship(s).")
+
+    if auto_detect:
+        proposals = detect_relationships(
+            conn,
+            known_entities_file=config.known_entities_file,
+            apply=apply,
+        )
+        action = "Applied" if apply else "Proposed"
+        typer.echo(f"{action} {len(proposals)} relationship classification(s):")
+        for p in proposals[:20]:
+            conf = f"{p['confidence']:.0%}"
+            typer.echo(f"  {p['sender_domain']:<30} {p['proposed_type']:<20} {conf}")
+        if len(proposals) > 20:
+            typer.echo(f"  ... and {len(proposals) - 20} more")
+
+    if list_all:
+        items = list_relationships(conn, type_filter=rel_type)
+        if not items:
+            typer.echo("No relationships found.")
+        else:
+            typer.echo(f"{'Domain':<30} {'Type':<20} {'Suppress':<10} {'Source':<10}")
+            typer.echo("-" * 75)
+            for item in items:
+                suppress = "Yes" if item.get("suppress_gems") else "No"
+                typer.echo(
+                    f"{item['sender_domain']:<30} {item['relationship_type']:<20} "
+                    f"{suppress:<10} {item.get('source', ''):<10}"
+                )
+
+    conn.close()
+
+
 # --- Profile commands ---
 
 @app.command()
@@ -324,7 +403,8 @@ def gems(
 
     # If no flags, detect gems first
     if not list_all and gem_type is None and segment is None and top is None:
-        count = detect_gems(conn, engagement_config=config.engagement, scoring_config=config.scoring)
+        count = detect_gems(conn, engagement_config=config.engagement, scoring_config=config.scoring,
+                            known_entities_file=config.known_entities_file)
         typer.echo(f"Gem detection complete: {count} gems detected.")
         conn.close()
         return
@@ -604,7 +684,15 @@ def run(
     from gemsieve.stages.profile import build_profiles, detect_gems
     count = build_profiles(conn)
     typer.echo(f"  Built {count} profiles.")
-    count = detect_gems(conn, engagement_config=config.engagement, scoring_config=config.scoring)
+
+    # Stage 5.5: Relationship detection
+    typer.echo("Stage 5.5: Detecting relationships...")
+    from gemsieve.stages.relationships import detect_relationships
+    proposals = detect_relationships(conn, known_entities_file=config.known_entities_file, apply=True)
+    typer.echo(f"  Classified {len(proposals)} sender relationship(s).")
+
+    count = detect_gems(conn, engagement_config=config.engagement, scoring_config=config.scoring,
+                        known_entities_file=config.known_entities_file)
     typer.echo(f"  Detected {count} gems.")
 
     # Stage 6: Scoring

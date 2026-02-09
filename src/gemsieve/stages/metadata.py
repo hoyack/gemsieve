@@ -6,10 +6,29 @@ import json
 import re
 import sqlite3
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
+import tldextract
+
 from gemsieve.esp_rules import load_esp_rules, match_esp
+
+
+def collapse_subdomain(domain: str) -> str:
+    """Collapse subdomains to the registered domain.
+
+    Examples:
+        mail.service.thehartford.com -> thehartford.com
+        notification.intuit.com -> intuit.com
+        example.co.uk -> example.co.uk
+    Falls back to original domain if tldextract can't parse.
+    """
+    if not domain:
+        return domain
+    ext = tldextract.extract(domain)
+    if ext.top_domain_under_public_suffix:
+        return ext.top_domain_under_public_suffix
+    return domain
 
 
 def extract_metadata(db: sqlite3.Connection, esp_rules_path: str = "esp_rules.yaml") -> int:
@@ -31,7 +50,9 @@ def extract_metadata(db: sqlite3.Connection, esp_rules_path: str = "esp_rules.ya
     for row in rows:
         msg_id = row["message_id"]
         from_address = row["from_address"] or ""
-        sender_domain = from_address.split("@")[1] if "@" in from_address else ""
+        raw_domain = from_address.split("@")[1] if "@" in from_address else ""
+        sender_domain = collapse_subdomain(raw_domain)
+        sender_subdomain = raw_domain if raw_domain != sender_domain else None
 
         # Parse headers
         headers: dict[str, list[str]] = {}
@@ -105,12 +126,12 @@ def extract_metadata(db: sqlite3.Connection, esp_rules_path: str = "esp_rules.ya
                (message_id, sender_domain, envelope_sender, esp_identified, esp_confidence,
                 dkim_domain, spf_result, dmarc_result, sending_ip,
                 list_unsubscribe_url, list_unsubscribe_email, is_bulk,
-                x_mailer, mail_server, precedence, feedback_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                x_mailer, mail_server, precedence, feedback_id, sender_subdomain)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (msg_id, sender_domain, envelope_sender, esp_name, esp_confidence,
              dkim_domain, spf_result, dmarc_result, sending_ip,
              unsub_url, unsub_email, is_bulk,
-             x_mailer, mail_server, precedence_value, feedback_id),
+             x_mailer, mail_server, precedence_value, feedback_id, sender_subdomain),
         )
         processed += 1
 
@@ -189,6 +210,9 @@ def _compute_sender_temporal(db: sqlite3.Connection) -> None:
             continue
         try:
             dt = parsedate_to_datetime(date_str)
+            # Normalize to UTC-aware to avoid naive vs aware comparison errors
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
             domain_dates.setdefault(domain, []).append(dt)
         except Exception:
             pass

@@ -17,7 +17,6 @@ GEM_STRATEGY_MAP = {
     GemType.UNANSWERED_ASK.value: "revival",
     GemType.PARTNER_PROGRAM.value: "partner",
     GemType.RENEWAL_LEVERAGE.value: "renewal_negotiation",
-    GemType.VENDOR_UPSELL.value: "mirror",
     GemType.DISTRIBUTION_CHANNEL.value: "distribution_pitch",
     GemType.CO_MARKETING.value: "mirror",
     GemType.PROCUREMENT_SIGNAL.value: "audit",

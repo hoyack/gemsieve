@@ -180,22 +180,44 @@ fetch('/api/stats/gems-by-type')
     });
   });
 
-// Top gems chart
-fetch('/api/stats/gems-top/10')
+// Top gems chart (stacked by gem type, clickable)
+fetch('/api/stats/gems-top-stacked/10')
   .then(r => r.json())
   .then(data => {
-    if (!data.length) return;
-    new Chart(document.getElementById('topGemsChart'), {
+    if (!data.domains || !data.domains.length) return;
+    const datasets = data.gem_types.map((gt, i) => ({
+      label: gt.replace(/_/g, ' '),
+      data: data.datasets[gt],
+      backgroundColor: COLORS[i % COLORS.length],
+    }));
+    const chart = new Chart(document.getElementById('topGemsChart'), {
       type: 'bar',
-      data: {
-        labels: data.map(d => d.sender_domain),
-        datasets: [{
-          label: 'Score',
-          data: data.map(d => d.score),
-          backgroundColor: '#4e79a7',
-        }]
-      },
-      options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } } }
+      data: { labels: data.domains, datasets: datasets },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true },
+        },
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12, padding: 8 } },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) {
+                return ctx.dataset.label + ': ' + ctx.raw;
+              }
+            }
+          }
+        },
+        onClick: function(evt, elements) {
+          if (!elements.length) return;
+          const el = elements[0];
+          const gt = data.gem_types[el.datasetIndex];
+          const gemId = data.gem_ids[gt][el.index];
+          if (gemId) window.location.href = '/admin/gem/detail/' + gemId;
+        }
+      }
     });
   });
 

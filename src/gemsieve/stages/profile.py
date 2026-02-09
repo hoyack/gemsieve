@@ -11,6 +11,42 @@ from datetime import datetime, timezone
 from gemsieve.models import GemType
 
 
+# --- Gem Eligibility Matrix (Phase 3) ---
+# Maps relationship_type -> set of allowed gem types
+
+GEM_ELIGIBILITY = {
+    "my_vendor": {GemType.PARTNER_PROGRAM.value, GemType.RENEWAL_LEVERAGE.value},
+    "my_service_provider": {GemType.RENEWAL_LEVERAGE.value},
+    "my_infrastructure": {GemType.RENEWAL_LEVERAGE.value},
+    "selling_to_me": {GemType.INDUSTRY_INTEL.value},
+    "inbound_prospect": {
+        GemType.DORMANT_WARM_THREAD.value, GemType.UNANSWERED_ASK.value,
+        GemType.WEAK_MARKETING_LEAD.value, GemType.PROCUREMENT_SIGNAL.value,
+        GemType.INDUSTRY_INTEL.value,
+    },
+    "warm_contact": {
+        GemType.DORMANT_WARM_THREAD.value, GemType.UNANSWERED_ASK.value,
+        GemType.WEAK_MARKETING_LEAD.value, GemType.PARTNER_PROGRAM.value,
+        GemType.DISTRIBUTION_CHANNEL.value, GemType.CO_MARKETING.value,
+        GemType.INDUSTRY_INTEL.value, GemType.PROCUREMENT_SIGNAL.value,
+    },
+    "potential_partner": {
+        GemType.DORMANT_WARM_THREAD.value, GemType.UNANSWERED_ASK.value,
+        GemType.PARTNER_PROGRAM.value, GemType.DISTRIBUTION_CHANNEL.value,
+        GemType.CO_MARKETING.value, GemType.INDUSTRY_INTEL.value,
+    },
+    "community": {GemType.DISTRIBUTION_CHANNEL.value, GemType.INDUSTRY_INTEL.value},
+    "institutional": set(),  # no gems
+    "unknown": {
+        GemType.DORMANT_WARM_THREAD.value, GemType.UNANSWERED_ASK.value,
+        GemType.WEAK_MARKETING_LEAD.value, GemType.PARTNER_PROGRAM.value,
+        GemType.RENEWAL_LEVERAGE.value, GemType.DISTRIBUTION_CHANNEL.value,
+        GemType.CO_MARKETING.value, GemType.INDUSTRY_INTEL.value,
+        GemType.PROCUREMENT_SIGNAL.value,
+    },
+}
+
+
 # --- Warm Signal Detection (Spec §2) ---
 
 WARM_SIGNALS = {
@@ -111,6 +147,54 @@ def compute_sophistication_score(
         score += 1
 
     return min(score, 10)
+
+
+def _compute_thread_metrics(db: sqlite3.Connection, domain: str) -> tuple[float | None, float | None]:
+    """Compute thread initiation and user reply metrics for a sender domain.
+
+    Returns:
+        (thread_initiation_ratio, user_reply_rate)
+        - thread_initiation_ratio: fraction of threads where the USER sent the first message
+          (1.0 = user always initiates contact = likely vendor you use)
+        - user_reply_rate: fraction of threads involving this domain where the user participated
+        None returned if no threads found.
+    """
+    # Get all threads involving this domain
+    threads = db.execute(
+        """SELECT DISTINCT t.thread_id, t.user_participated
+           FROM threads t
+           JOIN messages m ON t.thread_id = m.thread_id
+           JOIN parsed_metadata pm ON m.message_id = pm.message_id
+           WHERE pm.sender_domain = ?""",
+        (domain,),
+    ).fetchall()
+
+    if not threads:
+        return None, None
+
+    user_initiated = 0
+    user_participated = 0
+    total = len(threads)
+
+    for t in threads:
+        if t["user_participated"]:
+            user_participated += 1
+
+        # Check who sent the first message in this thread
+        first_msg = db.execute(
+            """SELECT m.is_sent FROM messages m
+               WHERE m.thread_id = ?
+               ORDER BY m.date ASC LIMIT 1""",
+            (t["thread_id"],),
+        ).fetchone()
+
+        if first_msg and first_msg["is_sent"]:
+            user_initiated += 1
+
+    initiation_ratio = user_initiated / total if total > 0 else None
+    reply_rate = user_participated / total if total > 0 else None
+
+    return initiation_ratio, reply_rate
 
 
 def build_profiles(db: sqlite3.Connection) -> int:
@@ -346,6 +430,9 @@ def _build_single_profile(db: sqlite3.Connection, domain: str) -> None:
     else:
         soph_avg = float(det_score)
 
+    # Compute thread metrics
+    thread_initiation_ratio, user_reply_rate = _compute_thread_metrics(db, domain)
+
     # Determine economic segments
     segments = _determine_segments(
         classifications, offer_dist, has_partner_program, renewal_dates
@@ -365,8 +452,9 @@ def _build_single_profile(db: sqlite3.Connection, domain: str) -> None:
             social_links, physical_address, utm_campaign_names,
             has_personalization, has_partner_program, partner_program_urls,
             renewal_dates, monetary_signals, authentication_quality,
-            unsubscribe_url, economic_segments)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            unsubscribe_url, economic_segments,
+            thread_initiation_ratio, user_reply_rate)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             domain, company_name, primary_email, reply_to_email,
             industry, company_size, soph_avg, soph_trend,
@@ -384,6 +472,7 @@ def _build_single_profile(db: sqlite3.Connection, domain: str) -> None:
             auth_quality,
             meta["list_unsubscribe_url"] if meta else None,
             json.dumps(segments),
+            thread_initiation_ratio, user_reply_rate,
         ),
     )
 
@@ -392,15 +481,23 @@ def detect_gems(
     db: sqlite3.Connection,
     engagement_config=None,
     scoring_config=None,
+    known_entities_file: str | None = None,
 ) -> int:
     """Detect gems for all sender profiles.
+
+    Uses relationship-aware eligibility matrix (Phase 3) to gate gem types
+    by sender relationship. Vendors, infrastructure, and institutional
+    senders are filtered out or capped.
 
     Args:
         engagement_config: EngagementConfig for co_marketing audience overlap check.
         scoring_config: ScoringConfig for dormant thread thresholds.
+        known_entities_file: Path to known entities YAML for relationship lookup.
 
     Returns count of gems detected.
     """
+    from gemsieve.known_entities import is_known_entity, load_known_entities
+
     # Clear existing gems to re-detect (idempotent)
     # Delete engagement drafts first to satisfy foreign key constraint
     db.execute("DELETE FROM engagement_drafts WHERE gem_id IN (SELECT id FROM gems)")
@@ -427,6 +524,33 @@ def detect_gems(
     excluded_rows = db.execute("SELECT domain FROM domain_exclusions").fetchall()
     excluded_domains = {r["domain"] for r in excluded_rows}
 
+    # Load sender relationships
+    rel_rows = db.execute("SELECT sender_domain, relationship_type, suppress_gems FROM sender_relationships").fetchall()
+    relationships = {r["sender_domain"]: r for r in rel_rows}
+
+    # Load known entities for fallback
+    known_entities = load_known_entities(known_entities_file)
+
+    # Map known entity category -> relationship type
+    category_to_rel = {
+        "infrastructure": "my_infrastructure",
+        "institutional": "institutional",
+        "marketing_platforms": "my_infrastructure",
+    }
+
+    # Map gem_type -> detection function
+    gem_detectors = {
+        GemType.DORMANT_WARM_THREAD.value: lambda p: _detect_dormant_warm_thread(db, p, dormant_config=dormant_config, bulk_sender_domains=bulk_sender_domains),
+        GemType.UNANSWERED_ASK.value: lambda p: _detect_unanswered_ask(db, p, bulk_sender_domains=bulk_sender_domains),
+        GemType.WEAK_MARKETING_LEAD.value: lambda p: _detect_weak_marketing_lead(db, p, bulk_sender_domains=bulk_sender_domains),
+        GemType.PARTNER_PROGRAM.value: lambda p: _detect_partner_program(db, p),
+        GemType.RENEWAL_LEVERAGE.value: lambda p: _detect_renewal_leverage(db, p, bulk_sender_domains=bulk_sender_domains),
+        GemType.DISTRIBUTION_CHANNEL.value: lambda p: _detect_distribution_channel(db, p),
+        GemType.CO_MARKETING.value: lambda p: _detect_co_marketing(db, p, engagement_config=engagement_config),
+        GemType.INDUSTRY_INTEL.value: lambda p: _detect_industry_intel(db, p, bulk_sender_domains=bulk_sender_domains),
+        GemType.PROCUREMENT_SIGNAL.value: lambda p: _detect_procurement_signal(db, p),
+    }
+
     gem_count = 0
     for profile in profiles:
         domain = profile["sender_domain"]
@@ -434,18 +558,28 @@ def detect_gems(
         # Skip excluded domains
         if domain in excluded_domains:
             continue
-        gems = []
 
-        gems.extend(_detect_dormant_warm_thread(db, profile, dormant_config=dormant_config, bulk_sender_domains=bulk_sender_domains))
-        gems.extend(_detect_unanswered_ask(db, profile, bulk_sender_domains=bulk_sender_domains))
-        gems.extend(_detect_weak_marketing_lead(db, profile, bulk_sender_domains=bulk_sender_domains))
-        gems.extend(_detect_partner_program(db, profile))
-        gems.extend(_detect_renewal_leverage(db, profile, bulk_sender_domains=bulk_sender_domains))
-        gems.extend(_detect_distribution_channel(db, profile))
-        gems.extend(_detect_co_marketing(db, profile, engagement_config=engagement_config))
-        gems.extend(_detect_vendor_upsell(db, profile))
-        gems.extend(_detect_industry_intel(db, profile, bulk_sender_domains=bulk_sender_domains))
-        gems.extend(_detect_procurement_signal(db, profile))
+        # Determine relationship type
+        rel_type = "unknown"
+        if domain in relationships:
+            rel_info = relationships[domain]
+            rel_type = rel_info["relationship_type"]
+            # Skip if suppress_gems is set
+            if rel_info["suppress_gems"]:
+                continue
+        else:
+            # Fallback to known entities
+            category = is_known_entity(domain, known_entities)
+            if category:
+                rel_type = category_to_rel.get(category, "unknown")
+
+        # Get eligible gem types for this relationship
+        eligible = GEM_ELIGIBILITY.get(rel_type, GEM_ELIGIBILITY["unknown"])
+
+        gems = []
+        for gem_type, detector in gem_detectors.items():
+            if gem_type in eligible:
+                gems.extend(detector(profile))
 
         for gem in gems:
             db.execute(
@@ -608,12 +742,18 @@ def _detect_dormant_warm_thread(db: sqlite3.Connection, profile, dormant_config=
         # Scan for warm signals
         warm_signals, warm_boost = _scan_warm_signals(db, t["thread_id"])
 
-        # Require at least 2 distinct warm signal types
+        # Gate 5: Require at least 1 distinct warm signal type
         distinct_signal_types = {
             s["signal"].split("_", 1)[-1] if s["signal"].startswith("warm_") else s["signal"]
             for s in warm_signals
         }
-        if require_human and len(distinct_signal_types) < 2:
+        if require_human and len(distinct_signal_types) < 1:
+            continue
+
+        # Gate 6: Reject if thread shows completion signals
+        from gemsieve.stages.relationships import scan_completion_signals
+        completion = scan_completion_signals(db, t["thread_id"])
+        if completion:
             continue
 
         # Filter out transactional/re_engagement intents
@@ -999,41 +1139,6 @@ def _detect_co_marketing(db: sqlite3.Connection, profile, engagement_config=None
             "urgency": "low",
         },
         "recommended_actions": ["Propose co-marketing campaign", "Explore content collaboration"],
-    }]
-
-
-def _detect_vendor_upsell(db: sqlite3.Connection, profile) -> list[dict]:
-    """Detect vendors pitching upgrades (they value you as a customer)."""
-    segments = []
-    try:
-        segments = json.loads(profile["economic_segments"]) if profile["economic_segments"] else []
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    offer_dist = {}
-    try:
-        offer_dist = json.loads(profile["offer_type_distribution"]) if profile["offer_type_distribution"] else {}
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    if "spend_map" not in segments:
-        return []
-
-    if not any(k in offer_dist for k in ("discount", "free_trial", "product_launch")):
-        return []
-
-    return [{
-        "gem_type": GemType.VENDOR_UPSELL.value,
-        "score": 25,
-        "explanation": {
-            "gem_type": "vendor_upsell",
-            "summary": f"{profile['company_name']} is pitching upgrades — they value your business.",
-            "signals": [{"signal": "upsell_offers", "evidence": "Discount/upgrade offers detected"}],
-            "confidence": 0.6,
-            "estimated_value": "low",
-            "urgency": "medium",
-        },
-        "recommended_actions": ["Evaluate upgrade offers for leverage"],
     }]
 
 

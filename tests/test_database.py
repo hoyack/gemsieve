@@ -72,15 +72,24 @@ def test_migrate_db_adds_missing_columns():
             is_bulk BOOLEAN
         )"""
     )
+    conn.execute(
+        """CREATE TABLE sender_profiles (
+            sender_domain TEXT PRIMARY KEY,
+            company_name TEXT
+        )"""
+    )
     conn.commit()
 
     actions = migrate_db(conn)
 
-    assert len(actions) == 4
+    assert len(actions) == 7
     assert any("x_mailer" in a for a in actions)
     assert any("mail_server" in a for a in actions)
     assert any("precedence" in a for a in actions)
     assert any("feedback_id" in a for a in actions)
+    assert any("sender_subdomain" in a for a in actions)
+    assert any("thread_initiation_ratio" in a for a in actions)
+    assert any("user_reply_rate" in a for a in actions)
 
     # Verify columns actually exist
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(parsed_metadata)").fetchall()}
@@ -88,6 +97,12 @@ def test_migrate_db_adds_missing_columns():
     assert "mail_server" in cols
     assert "precedence" in cols
     assert "feedback_id" in cols
+    assert "sender_subdomain" in cols
+
+    # Verify sender_profiles columns
+    sp_cols = {row["name"] for row in conn.execute("PRAGMA table_info(sender_profiles)").fetchall()}
+    assert "thread_initiation_ratio" in sp_cols
+    assert "user_reply_rate" in sp_cols
     conn.close()
 
 

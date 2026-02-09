@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS parsed_metadata (
     mail_server TEXT,
     precedence TEXT,
     feedback_id TEXT,
+    sender_subdomain TEXT,
     parsed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -206,6 +207,8 @@ CREATE TABLE IF NOT EXISTS sender_profiles (
     authentication_quality TEXT,
     unsubscribe_url TEXT,
     economic_segments JSON,
+    thread_initiation_ratio REAL,
+    user_reply_rate REAL,
     profiled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -253,6 +256,16 @@ CREATE TABLE IF NOT EXISTS engagement_drafts (
     sent_at TIMESTAMP,
     response_received BOOLEAN DEFAULT FALSE,
     response_sentiment TEXT
+);
+
+-- Sender relationships (Phase 3: relationship-aware gem detection)
+CREATE TABLE IF NOT EXISTS sender_relationships (
+    sender_domain TEXT PRIMARY KEY,
+    relationship_type TEXT NOT NULL,
+    relationship_note TEXT,
+    suppress_gems BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    source TEXT DEFAULT 'manual'
 );
 
 -- Pipeline run tracking

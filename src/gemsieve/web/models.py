@@ -89,6 +89,7 @@ class ParsedMetadata(Base):
     mail_server: Mapped[str | None] = mapped_column(String)
     precedence: Mapped[str | None] = mapped_column(String)
     feedback_id: Mapped[str | None] = mapped_column(String)
+    sender_subdomain: Mapped[str | None] = mapped_column(String)
     parsed_at: Mapped[str | None] = mapped_column(String)
 
 
@@ -217,7 +218,20 @@ class SenderProfile(Base):
     authentication_quality: Mapped[str | None] = mapped_column(String)
     unsubscribe_url: Mapped[str | None] = mapped_column(String)
     economic_segments: Mapped[str | None] = mapped_column(Text)
+    thread_initiation_ratio: Mapped[float | None] = mapped_column(Float)
+    user_reply_rate: Mapped[float | None] = mapped_column(Float)
     profiled_at: Mapped[str | None] = mapped_column(String)
+
+
+class SenderRelationship(Base):
+    __tablename__ = "sender_relationships"
+
+    sender_domain: Mapped[str] = mapped_column(String, primary_key=True)
+    relationship_type: Mapped[str] = mapped_column(String, nullable=False)
+    relationship_note: Mapped[str | None] = mapped_column(Text)
+    suppress_gems: Mapped[bool | None] = mapped_column(Boolean, default=False)
+    created_at: Mapped[str | None] = mapped_column(String)
+    source: Mapped[str | None] = mapped_column(String, default="manual")
 
 
 class Gem(Base):

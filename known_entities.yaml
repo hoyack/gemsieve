@@ -1,0 +1,54 @@
+infrastructure:
+  - google.com
+  - amazonaws.com
+  - stripe.com
+  - heroku.com
+  - cloudflare.com
+  - github.com
+  - gitlab.com
+  - digitalocean.com
+  - netlify.com
+  - vercel.com
+  - fly.io
+  - render.com
+  - mongodb.com
+  - redis.com
+  - twilio.com
+  - sendgrid.com
+  - mailgun.com
+  - postmarkapp.com
+  - sentry.io
+  - datadog.com
+  - pagerduty.com
+  - newrelic.com
+  - atlassian.com
+  - slack.com
+  - zoom.us
+
+institutional:
+  - thehartford.com
+  - rippling.com
+  - intuit.com
+  - gusto.com
+  - adp.com
+  - paylocity.com
+  - paychex.com
+  - bankofamerica.com
+  - chase.com
+  - wellsfargo.com
+  - americanexpress.com
+  - irs.gov
+  - ssa.gov
+
+marketing_platforms:
+  - hubspot.com
+  - salesforce.com
+  - mailchimp.com
+  - constantcontact.com
+  - marketo.com
+  - pardot.com
+  - activecampaign.com
+  - klaviyo.com
+  - brevo.com
+
+user_suppressed: []
